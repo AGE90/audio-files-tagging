@@ -1,0 +1,41 @@
+# Audio Files Tagging - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+pyprojroot>=0.3.0
+pathlib>=1.0.1
+mutagen>=1.47.0
+python-dotenv>=1.1.1
+sqlalchemy>=2.0.0
+
+# Audio analysis
+librosa>=0.10.0
+numpy>=1.24.0
+soundfile>=0.12.0
+audioread>=3.0.0
+
+# CLI
+typer[all]>=0.9.0
+rich>=13.0.0
+
+# GUI
+PySide6>=6.6.0
+
+# API Integration
+discogs-client>=2.3.0
+
+# Optional: Database drivers
+pymysql>=1.1.0
+
+# Development dependencies
+pytest>=7.4.0
+pytest-cov>=4.1.0
+mypy>=1.5.0
+black>=23.7.0
+ruff>=0.0.285
+flake8>=6.1.0
+
+# Jupyter (for notebooks)
+ipykernel>=6.25.0
+jupyter>=1.0.0
+notebook>=7.0.0

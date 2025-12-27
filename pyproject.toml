@@ -1,0 +1,88 @@
+[tool.poetry]
+name = "aft"
+version = "0.1.0"
+description = "A project for automatically adding metadata to audio files."
+authors = ["AGE90 <alejandrogomezechavarria@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "aft", from = "src" }]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+pyprojroot = "^0.3.0"
+pathlib = "^1.0.1"
+discogs-client = "^2.3.0"
+mutagen = "^1.47.0"
+python-dotenv = "^1.1.1"
+ipykernel = "^6.29.5"
+sqlalchemy = "^2.0.0"
+pymysql = "^1.1.0"
+librosa = "^0.10.0"
+numpy = "^1.24.0"
+typer = "^0.9.0"
+PySide6 = "^6.6.0"
+matplotlib = "^3.10.7"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=6.0"
+pytest-cov = "^6.2.1"
+mypy = "^1.16.1"
+flake8 = "^7.3.0"
+black = "^25.1.0"
+ruff = "^0.12.0"
+
+[tool.poetry.urls]
+homepage = "https://example.com"
+"Bug Tracker" = "https://example.com/issues"
+
+[tool.poetry.scripts]
+# Define the entry point for the aft command-line tool
+aft = "aft.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# Pytest configuration
+[tool.pytest.ini_options]
+addopts = ["--cov=src"]
+testpaths = ["tests"]
+
+# Mypy configuration
+[tool.mypy]
+mypy_path = "src"
+check_untyped_defs = true
+disallow_any_generics = true
+ignore_missing_imports = true
+no_implicit_optional = true
+show_error_codes = true
+strict_equality = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+no_implicit_reexport = true
+
+# Black configuration
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = '\.pyi?$'
+
+# Ruff configuration
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = []
+
+[tool.ruff.isort]
+known-first-party = ["aft"]
