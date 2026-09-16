@@ -5,20 +5,45 @@ import logging
 import traceback
 
 from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget
 )
+from PySide6.QtCore import QThread, Signal
 
-from aft.db.database import get_session_factory
+from aft.db.database import get_session_factory, incremental_update
 from aft.db.models import Track
 
-from ..constants import DASHBOARD_COLUMNS, TABLE_COLUMN_WIDTH_PATH
+from ..constants import DASHBOARD_COLUMNS, DEFAULT_DEST_DIR, TABLE_COLUMN_WIDTH_PATH
 
 logger = logging.getLogger(__name__)
+
+
+class RescanWorker(QThread):
+    """Worker thread for incremental library rescans."""
+
+    finished = Signal(list)  # List of updated file paths
+    error = Signal(str)
+
+    def __init__(self, library_root: str, db_path: str):
+        super().__init__()
+        self.library_root = library_root
+        self.db_path = db_path
+
+    def run(self):
+        try:
+            updated_files = incremental_update(self.library_root, self.db_path)
+            self.finished.emit(updated_files)
+        except (OSError, RuntimeError, ValueError) as e:
+            logger.error("Rescan error: %s", str(e))
+            self.error.emit(str(e))
 
 
 class DashboardWidget(QWidget):
@@ -27,6 +52,7 @@ class DashboardWidget(QWidget):
     def __init__(self, db_path: str, parent=None):
         super().__init__(parent)
         self.db_path = db_path
+        self.rescan_worker = None
         self.init_ui()
 
     def init_ui(self):
@@ -58,7 +84,57 @@ class DashboardWidget(QWidget):
         refresh_btn.clicked.connect(self.load_statistics)
         layout.addWidget(refresh_btn)
 
+        # Rescan library (incremental update)
+        rescan_layout = QHBoxLayout()
+        self.rescan_path_input = QLineEdit(DEFAULT_DEST_DIR)
+        rescan_layout.addWidget(QLabel("Library Root:"))
+        rescan_layout.addWidget(self.rescan_path_input)
+
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self.browse_library_root)
+        rescan_layout.addWidget(browse_btn)
+
+        self.rescan_btn = QPushButton("Rescan Library")
+        self.rescan_btn.clicked.connect(self.start_rescan)
+        rescan_layout.addWidget(self.rescan_btn)
+
+        layout.addLayout(rescan_layout)
+
         self.setLayout(layout)
+        self.load_statistics()
+
+    def browse_library_root(self):
+        """Open a directory picker for the library root."""
+        dir_path = QFileDialog.getExistingDirectory(
+            self, "Select Library Root", self.rescan_path_input.text())
+        if dir_path:
+            self.rescan_path_input.setText(dir_path)
+
+    def start_rescan(self):
+        """Kick off an incremental rescan in a background thread."""
+        library_root = self.rescan_path_input.text().strip()
+        if not library_root:
+            QMessageBox.warning(self, "Missing Path", "Please select a library root directory.")
+            return
+
+        self.rescan_btn.setEnabled(False)
+        self.stats_label.setText("Rescanning library...")
+
+        self.rescan_worker = RescanWorker(library_root, self.db_path)
+        self.rescan_worker.finished.connect(self.on_rescan_finished)
+        self.rescan_worker.error.connect(self.on_rescan_error)
+        self.rescan_worker.start()
+
+    def on_rescan_finished(self, updated_files: list):
+        """Handle successful rescan completion."""
+        self.rescan_btn.setEnabled(True)
+        logger.info("Rescan complete. Updated %d files.", len(updated_files))
+        self.load_statistics()
+
+    def on_rescan_error(self, message: str):
+        """Handle rescan failure."""
+        self.rescan_btn.setEnabled(True)
+        QMessageBox.critical(self, "Rescan Error", f"Error rescanning library:\n{message}")
         self.load_statistics()
 
     def load_statistics(self):
@@ -77,11 +153,12 @@ class DashboardWidget(QWidget):
             tracks_with_key = session.query(Track).filter(
                 Track.key.isnot(None)).count()
 
-            # Get recent tracks (limit to 1000 for performance)
+            # Get recent tracks (limit to 1000 for performance), most
+            # recently modified first, falling back to most recently
+            # added (highest id) for ties/nulls
             # User can use the Query tab to search all tracks
-            # all_tracks = session.query(Track).order_by(
-            #     Track.last_modified.desc()).limit(1000).all()
-            all_tracks = session.query(Track).all()
+            all_tracks = session.query(Track).order_by(
+                Track.last_modified.desc(), Track.id.desc()).limit(1000).all()
 
             session.close()
 

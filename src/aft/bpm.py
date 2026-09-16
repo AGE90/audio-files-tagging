@@ -7,7 +7,7 @@ Writes BPM values to audio file tags using mutagen.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Union, Callable
+from collections.abc import Callable
 
 import librosa
 import matplotlib.pyplot as plt
@@ -19,19 +19,25 @@ from mutagen.mp4 import MP4
 
 logger = logging.getLogger(__name__)
 
+# Backstop against garbage tempo values (corrupt detection, bad manual edits)
+# reaching a file's tag. Not the same as BPMAnalysisConfig's bpm_min/bpm_max,
+# which is about octave-plausibility during detection, not physical limits.
+BPM_SANITY_MIN = 20.0
+BPM_SANITY_MAX = 300.0
+
 
 def plot_bpm_analysis(
     file_path: Path,
     y: np.ndarray,
-    sample_rate: Union[int, float],
+    sample_rate: int | float,
     beats: np.ndarray,
     bpm: float,
-    onset_env: Optional[np.ndarray],
+    onset_env: np.ndarray | None,
     config: 'BPMAnalysisConfig',
     use_hpss: bool,
     use_onset_strength: bool,
     duration: float,
-    xlim: Optional[tuple[float, float]] = None,
+    xlim: tuple[float, float] | None = None,
 ) -> None:
     """
     Plot BPM analysis results with waveform, onset strength, and detected beats.
@@ -173,31 +179,98 @@ class BPMAnalysisConfig:
         (default: 5000.0, None uses Nyquist).
     n_mels : int
         Number of Mel bands to generate (default: 32).
-    
+    bpm_min : float
+        Lower bound of plausible BPM range used for octave-error correction
+        (default: 60.0).
+    bpm_max : float
+        Upper bound of plausible BPM range used for octave-error correction
+        (default: 200.0).
+
     Example
     -------
     >>> # Custom configuration for faster processing
     >>> config = BPMAnalysisConfig(sr=11025, use_hpss=False)
     >>> result = analyze_bpm("track.mp3", config=config)
     """
-    sr: Optional[int] = None  # Use None to load at original sample rate
+    sr: int | None = None  # Use None to load at original sample rate
     hop_length: int = 512
     tightness: int = 400
     start_bpm: float = 120.0
     n_fft: int = 512
     aggregate: Callable[..., float] = np.mean
-    fmax: Optional[float] = 5000.0
+    fmax: float | None = 5000.0
     n_mels: int = 32
+    bpm_min: float = 60.0
+    bpm_max: float = 200.0
+
+
+def _correct_octave_error(
+    tempo: float,
+    onset_env: np.ndarray,
+    sample_rate: int | float,
+    hop_length: int,
+    bpm_min: float,
+    bpm_max: float,
+) -> float:
+    """
+    Correct half/double-tempo (octave) errors in a tempo estimate.
+
+    librosa's beat tracker returns a single point estimate that is prone to
+    snapping to the wrong octave (e.g. 87 BPM instead of 174) when a track's
+    true tempo is far from the fixed start_bpm prior. This scores the
+    tempo, tempo*2, and tempo/2 candidates against onset-envelope
+    autocorrelation strength at each candidate's beat period, and returns
+    the best-supported candidate within [bpm_min, bpm_max].
+
+    Parameters
+    ----------
+    tempo : float
+        Initial tempo estimate from librosa.beat.beat_track.
+    onset_env : np.ndarray
+        Onset strength envelope used for detection.
+    sample_rate : Union[int, float]
+        Sample rate of the audio.
+    hop_length : int
+        Hop length used to compute onset_env.
+    bpm_min : float
+        Lower bound of plausible BPM range.
+    bpm_max : float
+        Upper bound of plausible BPM range.
+
+    Returns
+    -------
+    float
+        The best-supported BPM candidate. Falls back to the original
+        estimate if no candidate falls within [bpm_min, bpm_max].
+    """
+    candidates = [c for c in (tempo, tempo * 2, tempo / 2) if bpm_min <= c <= bpm_max]
+    if not candidates:
+        return tempo
+
+    autocorr = librosa.autocorrelate(onset_env)
+    max_lag = len(autocorr) - 1
+
+    best_bpm = candidates[0]
+    best_score = -1.0
+    for candidate in candidates:
+        period_seconds = 60.0 / candidate
+        lag_frames = int(round(period_seconds * sample_rate / hop_length))
+        score = autocorr[lag_frames] if 0 < lag_frames <= max_lag else -1.0
+        if score > best_score:
+            best_score = score
+            best_bpm = candidate
+
+    return best_bpm
 
 
 def analyze_bpm(
-    file_path: Union[str, Path],
+    file_path: str | Path,
     use_hpss: bool = True,
     use_onset_strength: bool = True,
-    config: Optional[BPMAnalysisConfig] = None,
+    config: BPMAnalysisConfig | None = None,
     plot: bool = False,
-    xlim: Optional[tuple[float, float]] = None,
-) -> Dict[str, Union[str, float, int, None]]:
+    xlim: tuple[float, float] | None = None,
+) -> dict[str, str | float | int | None]:
     """
     Analyze BPM of an audio file using librosa.
 
@@ -306,6 +379,18 @@ def analyze_bpm(
 
         result['bpm'] = float(tempo)
 
+        # Correct half/double-tempo (octave) errors using onset-envelope
+        # evidence. Only possible when an onset envelope was computed.
+        if use_onset_strength and onset_env is not None:
+            result['bpm'] = _correct_octave_error(
+                float(tempo),
+                onset_env,
+                sample_rate,
+                config.hop_length,
+                config.bpm_min,
+                config.bpm_max,
+            )
+
         # Calculate confidence based on beat strength variance
         # Lower variance = more consistent beats = higher confidence
         if len(beats) > 1:
@@ -351,7 +436,11 @@ def analyze_bpm(
                 xlim=xlim,
             )
 
-    except (FileNotFoundError, RuntimeError, ValueError, IOError) as e:
+    except Exception as e:
+        # A single unreadable/corrupt file (common with P2P downloads) must
+        # not crash a batch ingest run over the rest of the library, so this
+        # catches broadly rather than guessing at every exception type
+        # librosa/audioread/soundfile can raise for a bad file.
         logger.error("Error analyzing BPM for %s: %s", file_path, str(e))
         result['bpm'] = None
         result['confidence'] = 0.0
@@ -359,7 +448,7 @@ def analyze_bpm(
     return result
 
 
-def write_bpm_tag(file_path: Union[str, Path], bpm: float) -> bool:
+def write_bpm_tag(file_path: str | Path, bpm: float) -> bool:
     """
     Write BPM value to audio file tags.
 
@@ -382,6 +471,13 @@ def write_bpm_tag(file_path: Union[str, Path], bpm: float) -> bool:
     >>> success = write_bpm_tag("track.mp3", 128.5)
     """
     file_path = Path(file_path)
+
+    if not (BPM_SANITY_MIN <= bpm <= BPM_SANITY_MAX):
+        logger.warning(
+            "Refusing to write implausible BPM %.2f to %s (expected %.0f-%.0f)",
+            bpm, file_path, BPM_SANITY_MIN, BPM_SANITY_MAX,
+        )
+        return False
 
     try:
         audio = File(str(file_path))
@@ -425,9 +521,9 @@ def write_bpm_tag(file_path: Union[str, Path], bpm: float) -> bool:
 
 
 def analyze_and_tag_bpm(
-    file_path: Union[str, Path],
+    file_path: str | Path,
     write_tag: bool = True,
-) -> Dict[str, Union[str, float, int, None]]:
+) -> dict[str, str | float | int | None]:
     """
     Analyze BPM of an audio file and optionally write it to the file's tags.
 
@@ -474,9 +570,9 @@ def analyze_and_tag_bpm(
 
 
 def batch_analyze_bpm(
-    file_paths: list[Union[str, Path]],
+    file_paths: list[str | Path],
     write_tags: bool = True
-) -> list[Dict[str, Union[str, float, int, None]]]:
+) -> list[dict[str, str | float | int | None]]:
     """
     Analyze BPM for multiple audio files.
 

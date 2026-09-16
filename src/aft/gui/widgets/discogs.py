@@ -3,18 +3,18 @@ Discogs lookup widget for fetching and applying metadata from Discogs API.
 """
 import logging
 from difflib import SequenceMatcher
-from typing import Dict, List, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem,
-    QFileDialog, QMessageBox, QAbstractItemView,
+    QFileDialog, QMessageBox, QAbstractItemView, QCheckBox,
     QGroupBox, QFormLayout, QSpinBox, QScrollArea
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 
 from aft.discogs_client import DiscogsClient
 from aft.tags import read_audio_tags, write_audio_tags
+from aft.bpm import analyze_and_tag_bpm
 from aft import credentials
 from ..constants import (
     DISCOGS_RESULTS_COLUMNS, DISCOGS_MAX_RESULTS,
@@ -37,6 +37,41 @@ DISCOGS_TRACKLIST_COLUMNS = [
 logger = logging.getLogger(__name__)
 
 
+class ApplyMetadataWorker(QThread):
+    """Worker thread for writing metadata (and optionally BPM) to files."""
+
+    finished = Signal(int, list)  # success_count, errors
+
+    def __init__(self, file_metadata: list[tuple[str, dict]], analyze_bpm: bool):
+        super().__init__()
+        self.file_metadata = file_metadata
+        self.analyze_bpm = analyze_bpm
+
+    def run(self):
+        success_count = 0
+        errors = []
+
+        for file_path, metadata_to_write in self.file_metadata:
+            try:
+                if self.analyze_bpm:
+                    existing_bpm = read_audio_tags(file_path).get('bpm')
+                    if not existing_bpm:
+                        bpm_result = analyze_and_tag_bpm(file_path, write_tag=True)
+                        logger.info(
+                            "BPM analysis for %s: %s", file_path, bpm_result.get('bpm'))
+
+                success = write_audio_tags(file_path, metadata_to_write)
+                if success:
+                    success_count += 1
+                else:
+                    errors.append(f"{file_path}: Failed to write")
+            except Exception as e:
+                logger.error("Error applying metadata to %s: %s", file_path, str(e))
+                errors.append(f"{file_path}: {str(e)}")
+
+        self.finished.emit(success_count, errors)
+
+
 class DiscogsLookupWidget(QWidget):
     """Widget for looking up and applying metadata from Discogs."""
 
@@ -45,8 +80,9 @@ class DiscogsLookupWidget(QWidget):
         self.discogs_client = None
         # Store list of loaded tracks with their metadata
         # Each item: {"file_path": str, "metadata": dict, "discogs_match": dict}
-        self.loaded_tracks: List[Dict] = []
+        self.loaded_tracks: list[dict] = []
         self.selected_release_data = None
+        self.apply_worker = None
         self.init_ui()
         self.init_discogs_client()
 
@@ -232,6 +268,10 @@ class DiscogsLookupWidget(QWidget):
         self.apply_btn.clicked.connect(self.apply_metadata)
         apply_layout.addWidget(self.apply_btn)
 
+        self.analyze_bpm_checkbox = QCheckBox("Also compute BPM")
+        self.analyze_bpm_checkbox.setChecked(True)
+        apply_layout.addWidget(self.analyze_bpm_checkbox)
+
         self.apply_status_label = QLabel("")
         apply_layout.addWidget(self.apply_status_label, 1)
         right_column.addLayout(apply_layout)
@@ -270,7 +310,7 @@ class DiscogsLookupWidget(QWidget):
         self.apply_btn.setEnabled(False)
         self.tracklist_table.setRowCount(0)
 
-    def load_files(self, file_paths: List[str]):
+    def load_files(self, file_paths: list[str]):
         """Load multiple audio files and display their metadata."""
         errors = []
 
@@ -553,7 +593,7 @@ class DiscogsLookupWidget(QWidget):
         # Refresh tracks table to show updated track numbers and titles
         self.refresh_tracks_table()
 
-    def _find_matching_track(self, discogs_track: Dict, available_tracks: List[Dict]) -> Optional[Dict]:
+    def _find_matching_track(self, discogs_track: dict, available_tracks: list[dict]) -> dict | None:
         """Find the best matching local track for a Discogs track."""
         if not available_tracks:
             return None
@@ -596,7 +636,7 @@ class DiscogsLookupWidget(QWidget):
         # No good match found
         return None
 
-    def _format_release_details(self, release_data: Dict) -> str:
+    def _format_release_details(self, release_data: dict) -> str:
         """Format release data for display."""
         details = "Discogs metadata:\n\n"
         details += f"Title: {release_data.get('title', 'N/A')}\n"
@@ -695,10 +735,8 @@ class DiscogsLookupWidget(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # Apply metadata to each track
-        success_count = 0
-        errors = []
-
+        # Build per-file metadata (cheap, stays on the main thread)
+        file_metadata = []
         for track_info in self.loaded_tracks:
             file_path = track_info["file_path"]
 
@@ -719,17 +757,21 @@ class DiscogsLookupWidget(QWidget):
             if edited_title:
                 metadata_to_write['title'] = edited_title
 
-            # Write metadata to file
-            try:
-                success = write_audio_tags(file_path, metadata_to_write)
-                if success:
-                    success_count += 1
-                else:
-                    errors.append(f"{file_path}: Failed to write")
-            except Exception as e:
-                logger.error("Error writing metadata to %s: %s",
-                             file_path, str(e))
-                errors.append(f"{file_path}: {str(e)}")
+            file_metadata.append((file_path, metadata_to_write))
+
+        # Write metadata (and optionally analyze BPM) on a background thread -
+        # BPM analysis is CPU-heavy and would otherwise freeze the UI
+        self.apply_btn.setEnabled(False)
+        self.apply_status_label.setText("Applying metadata...")
+
+        self.apply_worker = ApplyMetadataWorker(
+            file_metadata, self.analyze_bpm_checkbox.isChecked())
+        self.apply_worker.finished.connect(self.on_apply_metadata_finished)
+        self.apply_worker.start()
+
+    def on_apply_metadata_finished(self, success_count: int, errors: list):
+        """Handle completion of the metadata/BPM apply worker."""
+        self.apply_btn.setEnabled(True)
 
         # Show results
         if success_count == len(self.loaded_tracks):

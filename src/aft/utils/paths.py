@@ -15,12 +15,12 @@ Dependencies:
 """
 
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Union
+from collections.abc import Callable, Iterable
 
 from pyprojroot import here
 
 
-def make_dir_function(dir_name: Union[str, Iterable[str]]) -> Callable[..., Path]:
+def make_dir_function(dir_name: str | Iterable[str]) -> Callable[..., Path]:
     """
     Generate a function that constructs a path relative to the project directory, 
     extending it with the provided subdirectory or subdirectories.
@@ -51,7 +51,7 @@ def make_dir_function(dir_name: Union[str, Iterable[str]]) -> Callable[..., Path
 project_dir = make_dir_function('')
 
 # Define a comprehensive list of directory types
-dir_types: List[List[str]] = [
+dir_types: list[list[str]] = [
     ['data'],                   # Base data folder
     ['notebooks'],              # Jupyter notebooks folder
     ['logs'],                   # Logs folder
@@ -60,7 +60,7 @@ dir_types: List[List[str]] = [
 ]
 
 # Use a dictionary to store dynamically created directory functions
-dir_functions: Dict[str, Callable[..., Path]] = {}
+dir_functions: dict[str, Callable[..., Path]] = {}
 
 # Dynamically create directory functions and store them in the dictionary
 for dir_type in dir_types:

@@ -12,13 +12,13 @@ Orchestrates the full workflow:
 import logging
 import shutil
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any
 from dataclasses import dataclass, field
 
-from aft.tags import read_audio_tags
+from aft.tags import read_audio_tags, write_audio_tags
 from aft.bpm import analyze_and_tag_bpm
 from aft.utils.normalization import normalize_spaces
-from aft.db.database import get_session_factory, SessionLocal, Track
+from aft.db.database import get_session_factory, SessionLocal, Track, get_audio_file_metadata
 from aft.discogs_client import DiscogsClient
 
 logger = logging.getLogger(__name__)
@@ -34,8 +34,8 @@ class FileProcessingResult:
     file_path: str
     success: bool
     message: str
-    new_path: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    new_path: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass
@@ -68,7 +68,7 @@ class IngestReport:
     processed: int = 0
     failed: int = 0
     skipped: int = 0
-    results: List[FileProcessingResult] = field(default_factory=list)
+    results: list[FileProcessingResult] = field(default_factory=list)
     dry_run: bool = False
 
     def summary(self) -> str:
@@ -91,6 +91,35 @@ class IngestReport:
         return "\n".join(lines)
 
 
+def normalize_path_component(name: str) -> str:
+    """
+    Normalize a single path component (directory or file name) for
+    cross-platform safety.
+
+    Strips characters illegal on Windows filesystems and trailing dots/spaces.
+    Windows' own APIs silently strip a trailing dot or space from path
+    components, but WSL/DrvFs writes it literally - producing a folder
+    Windows Explorer can't open. Stripping it here keeps names valid on
+    both platforms.
+
+    Parameters
+    ----------
+    name : str
+        Original path component
+
+    Returns
+    -------
+    str
+        Path component safe for both Windows and Linux filesystems
+    """
+    illegal_chars = '<>:"|?*'
+    for char in illegal_chars:
+        name = name.replace(char, '')
+
+    name = normalize_spaces(name).replace('..', '.')
+    return name.strip('. ')
+
+
 def normalize_filename(filename: str) -> str:
     """
     Normalize a filename by removing illegal characters and extra spaces.
@@ -105,28 +134,19 @@ def normalize_filename(filename: str) -> str:
     str
         Normalized filename safe for filesystem
     """
-    # Remove illegal characters for Windows filesystems
-    illegal_chars = '<>:"|?*'
-    for char in illegal_chars:
-        filename = filename.replace(char, '')
-
-    # Normalize spaces
-    filename = normalize_spaces(filename)
-
-    # Replace multiple dots (except extension)
+    # Split off the extension so it isn't touched by trailing-dot stripping
     parts = filename.rsplit('.', 1)
     if len(parts) == 2:
         name, ext = parts
-        name = name.replace('..', '.').strip('.')
-        filename = f"{name}.{ext}"
+        return f"{normalize_path_component(name)}.{ext}"
 
-    return filename
+    return normalize_path_component(filename)
 
 
 def detect_artist_album_from_path(
     file_path: Path,
     source_dir: Path
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None]:
     """
     Try to detect artist and album from directory structure.
 
@@ -182,7 +202,7 @@ def process_audio_file(
     dest_root: Path,
     analyze_bpm: bool = True,
     dry_run: bool = False,
-    discogs_client: Optional[DiscogsClient] = None,
+    discogs_client: DiscogsClient | None = None,
 ) -> FileProcessingResult:
     """
     Process a single audio file through the ingest pipeline.
@@ -200,7 +220,10 @@ def process_audio_file(
     dry_run : bool
         If True, don't make any actual changes
     discogs_client : Optional[DiscogsClient]
-        Discogs client for metadata lookup (optional)
+        Discogs client for metadata lookup (optional). When supplied, the
+        top Discogs search match for (artist, album) is applied - use the
+        GUI's Discogs Lookup tab instead for human-reviewed release
+        selection.
 
     Returns
     -------
@@ -230,6 +253,25 @@ def process_audio_file(
         album = normalize_spaces(album)
         title = normalize_spaces(title)
 
+        # Look up and apply Discogs metadata (genre/styles/labels/catalog#)
+        # if a client was supplied. Picks the top search match - the GUI
+        # Discogs Lookup tab remains the human-reviewed path.
+        if discogs_client is not None and not dry_run:
+            try:
+                releases = discogs_client.search_release(album, artist)
+                if releases:
+                    release = discogs_client.get_release_by_id(releases[0]['id'])
+                    if release:
+                        write_audio_tags(file_path, {
+                            'genre': release.get('genres', []),
+                            'styles': release.get('styles', []),
+                            'labels': release.get('labels', []),
+                            'catalog_number': release.get('catalog_numbers', []),
+                        })
+            except (OSError, ValueError, RuntimeError) as e:
+                logger.warning(
+                    "Discogs lookup failed for %s: %s", file_path.name, e)
+
         # Analyze BPM if requested and not already present in tags
         bpm_result = None
         existing_bpm = tags.get('bpm')
@@ -242,13 +284,13 @@ def process_audio_file(
                 try:
                     bpm_result = analyze_and_tag_bpm(file_path, write_tag=True)
                     logger.info("BPM analysis: %s", bpm_result.get('bpm', 'N/A'))
-                except (OSError, IOError, RuntimeError, ValueError) as e:
+                except (OSError, RuntimeError, ValueError) as e:
                     logger.warning(
                         "BPM analysis failed for %s: %s", file_path.name, e)
 
         # Build destination path: dest_root / artist / album / filename
         normalized_filename = normalize_filename(file_path.name)
-        dest_dir = dest_root / artist / album
+        dest_dir = dest_root / normalize_path_component(artist) / normalize_path_component(album)
         dest_path = dest_dir / normalized_filename
 
         # Check if file already exists at destination
@@ -284,10 +326,11 @@ def process_audio_file(
                 'album': album,
                 'title': title,
                 'bpm': bpm_result.get('bpm') if bpm_result else None,
+                'bpm_confidence': bpm_result.get('confidence') if bpm_result else None,
             }
         )
 
-    except (OSError, IOError, RuntimeError, ValueError, KeyError) as e:
+    except (OSError, RuntimeError, ValueError, KeyError) as e:
         logger.error("Error processing %s: %s", file_path, str(e))
         return FileProcessingResult(
             file_path=str(file_path),
@@ -299,10 +342,10 @@ def process_audio_file(
 def process_directory(
     source_dir: str,
     dest_root: str,
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
     analyze_bpm: bool = True,
     dry_run: bool = False,
-    discogs_client: Optional[DiscogsClient] = None,
+    discogs_client: DiscogsClient | None = None,
 ) -> IngestReport:
     """
     Process all audio files in a directory through the ingest pipeline.
@@ -431,7 +474,7 @@ def process_directory(
                             shutil.copy2(str(image_file), str(dest_image_path))
                             logger.info("Copied cover art: %s", dest_image_path)
 
-            except (OSError, IOError, ValueError) as e:
+            except (OSError, ValueError) as e:
                 logger.warning("Could not process image %s: %s", image_file, e)
 
     # Update database if not dry run
@@ -449,19 +492,19 @@ def process_directory(
                         file_path=result.new_path).first()
 
                     if not track:
-                        track = Track(
-                            file_path=result.new_path,
-                            title=result.metadata.get('title', ''),
-                            artist=result.metadata.get('artist', ''),
-                            album=result.metadata.get('album', ''),
-                            bpm=result.metadata.get('bpm'),
-                        )
-                        session.add(track)
+                        # Read the full tag set from the moved file rather than
+                        # the narrower in-memory result.metadata, so ingested
+                        # tracks get the same DB columns a scan would populate
+                        # (genre, year, key, duration, etc.)
+                        full_metadata = get_audio_file_metadata(Path(result.new_path))
+                        if full_metadata:
+                            track = Track(**full_metadata)
+                            session.add(track)
 
             session.commit()
             logger.info("Database updated successfully")
 
-        except (OSError, IOError, RuntimeError, ValueError) as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.error("Error updating database: %s", e)
             session.rollback()
         finally:

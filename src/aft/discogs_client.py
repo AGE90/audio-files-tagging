@@ -3,7 +3,6 @@ This module provides a client for interacting with the Discogs API.
 """
 import logging
 import time
-from typing import Dict, List, Optional
 from itertools import islice
 
 import discogs_client as discogs
@@ -29,7 +28,14 @@ class DiscogsClient:
             Discogs API user token for authentication.
         rate_limit_delay : float
             Delay in seconds between API requests to avoid rate limiting (default: 1.0).
+
+        Raises
+        ------
+        ValueError
+            If user_token is empty/None.
         """
+        if not user_token:
+            raise ValueError("Discogs user token is required")
         self.client = discogs.Client(
             'audio_files_tagging/0.1.0',
             user_token=user_token
@@ -44,7 +50,7 @@ class DiscogsClient:
             time.sleep(self.rate_limit_delay - elapsed)
         self._last_request_time = time.time()
 
-    def search_artist(self, artist_name: str, max_results: int = 10) -> List[Dict]:
+    def search_artist(self, artist_name: str, max_results: int = 10) -> list[dict]:
         """
         Search for artists by name.
 
@@ -105,7 +111,7 @@ class DiscogsClient:
                 "Unexpected error searching for artist '%s': %s", artist_name, str(e))
             return []
 
-    def get_artist_by_id(self, artist_id: int) -> Optional[Dict]:
+    def get_artist_by_id(self, artist_id: int) -> dict | None:
         """
         Get artist information by artist ID.
 
@@ -158,9 +164,9 @@ class DiscogsClient:
     def search_release(
         self,
         release_title: str,
-        artist: Optional[str] = None,
+        artist: str | None = None,
         max_results: int = 10
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Search for releases by title and optionally filter by artist.
 
@@ -234,7 +240,7 @@ class DiscogsClient:
                 "Unexpected error searching for release '%s': %s", release_title, str(e))
             return []
 
-    def get_release_by_id(self, release_id: int) -> Optional[Dict]:
+    def get_release_by_id(self, release_id: int) -> dict | None:
         """
         Get release information by release ID.
 
@@ -302,7 +308,7 @@ class DiscogsClient:
                 "Unexpected error retrieving release ID %d: %s", release_id, str(e))
             return None
 
-    def get_master_release(self, master_id: int) -> Optional[Dict]:
+    def get_master_release(self, master_id: int) -> dict | None:
         """
         Get master release information by master ID.
 

@@ -4,6 +4,22 @@ Constants for the GUI application.
 Centralized configuration values for window sizes, default paths,
 colors, and other application-wide settings.
 """
+import platform
+
+
+def _default_path(windows_path: str) -> str:
+    """
+    Return the reference Windows path as-is on Windows, or its WSL mount
+    equivalent elsewhere (e.g. "D:\\Music Collection" -> "/mnt/d/Music Collection").
+
+    The library's reference layout lives on a Windows drive; under WSL that
+    drive is reachable at /mnt/<letter>, not the Windows-style path.
+    """
+    if platform.system() == "Windows":
+        return windows_path
+    drive, _, rest = windows_path.partition(":")
+    return f"/mnt/{drive.lower()}{rest.replace('\\', '/')}"
+
 
 # Window Configuration
 WINDOW_TITLE = "Audio Metadata Tag Editor - Music Library Manager"
@@ -14,8 +30,8 @@ WINDOW_Y = 100
 
 # Default Paths
 DEFAULT_DB_PATH = "data/library.db"
-DEFAULT_SOURCE_DIR = r"D:\Soulseek Downloads\complete"
-DEFAULT_DEST_DIR = r"D:\Music Collection"
+DEFAULT_SOURCE_DIR = _default_path(r"D:\Soulseek Downloads\complete")
+DEFAULT_DEST_DIR = _default_path(r"D:\Music Collection")
 
 # Table Configuration
 TABLE_COLUMN_WIDTH_PATH = 300

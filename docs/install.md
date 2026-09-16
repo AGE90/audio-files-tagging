@@ -1,164 +1,100 @@
 # Audio Files Tagging Installation Guide
 
-Welcome to the **Audio Files Tagging (AFT)** project installation guide! This guide will walk you through setting up the environment, installing necessary dependencies, and configuring essential tools to ensure a smooth development experience.
+Welcome to the **Audio Files Tagging (AFT)** project installation guide! This guide walks you through setting up the environment and installing dependencies.
 
 ---
 
 ## Prerequisites
 
-Make sure you have the following installed before proceeding:
+- **Python**: Version >= 3.12
+- **uv**: Latest version (for dependency management)
 
-- **Python**: Version >= 3.9
-- **Poetry**: Latest version (for dependency management)
-
-To install Poetry, follow the [official installation guide](https://python-poetry.org/docs/#installation).
+To install uv, follow the [official installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ---
 
 ## 1. Clone and Set Up the Project
 
-First, clone the repository and navigate to the project directory:
-
 ```bash
 git clone <repository-url>
-cd {{ cookiecutter.project_slug }}
+cd audio-files-tagging
 ```
 
 ---
 
-## 2. Install Dependencies with Poetry
+## 2. Install Dependencies with uv
 
-Poetry will automatically create a virtual environment and install all dependencies. Run the following command in your project root:
+`uv sync` creates a virtual environment (`.venv`) and installs all dependencies (including dev tools like black, ruff, mypy) from `pyproject.toml`/`uv.lock`:
 
 ```bash
-poetry install
+uv sync
 ```
 
-This will install all dependencies defined in `pyproject.toml`, including:
-
-- Core dependencies
-- Development tools (black, ruff, mypy, etc.)
-
-### Optional: Install Specific Groups
-
-You can install specific dependency groups if needed:
+### Adding a Dependency
 
 ```bash
-# Install only development dependencies
-poetry install --with dev
+uv add <package-name>
 ```
 
-### Installing Additional Libraries
-
-If you need to install additional libraries, you can do so with:
+### Adding a Dev-Only Dependency
 
 ```bash
-poetry add <package-name>
+uv add --dev <package-name>
 ```
 
 ---
 
-## 3. Activate the Poetry Environment
+## 3. Run Commands in the Environment
 
-To activate the Poetry virtual environment:
+Prefix any command with `uv run` to execute it inside the project's virtual environment, without activating it manually:
 
 ```bash
-poetry env activate
+uv run python -m aft.scripts.ingest --help
 ```
 
-Or run commands directly using:
+To activate the environment directly instead:
 
 ```bash
-poetry run <command>
-```
-
----
-
-## 4. Set Up Development Tools
-
-### Pre-commit Hooks
-
-Install pre-commit hooks to ensure code quality:
-
-```bash
-poetry run pre-commit install
-```
-
-### Jupyter and JupyterLab
-
-If you plan to use Jupyter notebooks, install the notebook group:
-
-```bash
-poetry install --with notebook
-```
-
-To launch JupyterLab:
-
-```bash
-poetry run jupyter lab
+source .venv/bin/activate   # macOS/Linux
+.\.venv\Scripts\activate    # Windows
 ```
 
 ---
 
-## 6. Managing Project Tasks with Invoke
+## 4. Configure Discogs API (Optional)
 
-We use **[Invoke](http://www.pyinvoke.org/)** as a task runner for common project management tasks.
+Metadata enrichment via Discogs requires a user token. Get one from https://www.discogs.com/settings/developers, then create a `.env` file in the project root:
 
-### List Available Tasks
-
-```bash
-poetry run invoke -l
+```
+DISCOGS_USER_TOKEN=your_token_here
 ```
 
-### Get Help on a Specific Task
-
-```bash
-poetry run invoke --help <task-name>
-```
-
-### Adding Custom Tasks
-
-To add your own tasks, edit the `tasks.py` file in your project root.
+This is loaded automatically via `python-dotenv` (see `aft.credentials`).
 
 ---
 
-## 7. Testing
+## 5. Testing
 
-Run the test suite using pytest:
-
-```bash
-poetry run pytest
-```
-
-For coverage reports:
+Run the test suite using pytest (configured via `pyproject.toml` to always run with coverage on `src`):
 
 ```bash
-poetry run pytest --cov=src
+uv run pytest tests/ -v
 ```
 
 ---
 
-## 8. Documentation
-
-Build the documentation:
+## 6. Lint, Format, Type-Check
 
 ```bash
-poetry run mkdocs build
-```
-
-Serve the documentation locally:
-
-```bash
-poetry run mkdocs serve
+uv run ruff check src tests
+uv run black src tests
+uv run mypy src
 ```
 
 ---
 
 ## Final Notes
 
-- Always use `poetry run` to execute commands within the project's virtual environment
-- Use `poetry add <package>` to add new dependencies
-- Use `poetry update` to update dependencies
-- Check `pyproject.toml` for all available dependency groups and their purposes
-
-You're now all set to start developing with **{{ cookiecutter.project_name }}**!
+- Always use `uv run` to execute commands within the project's virtual environment (or activate it directly).
+- There is no `aft` console command — invoke via `python -m aft.scripts.*` (see `CLAUDE.md`).
+- Check `pyproject.toml` for the full dependency list.

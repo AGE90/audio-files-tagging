@@ -4,7 +4,8 @@ Get up and running with audio-files-tagging in 5 minutes!
 
 ## Prerequisites
 
-- Python 3.10 or 3.11
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) for dependency management
 - Windows 10+ (or macOS/Linux)
 - Your music collection path (e.g., `D:\Music Collection`)
 
@@ -14,21 +15,16 @@ Get up and running with audio-files-tagging in 5 minutes!
 # Navigate to project
 cd audio-files-tagging
 
-# Create virtual environment
-python -m venv .venv
-
-# Activate it
-.\.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # macOS/Linux
-
-# Install dependencies
-pip install -r requirements.txt
+# Create the environment and install dependencies
+uv sync
 ```
+
+Prefix commands below with `uv run` (e.g. `uv run python -m aft.scripts.ingest ...`), or activate the environment directly: `.\.venv\Scripts\activate` (Windows) / `source .venv/bin/activate` (macOS/Linux).
 
 ## Step 2: Initialize Database (30 seconds)
 
 ```bash
-python -m aft.scripts.scan_library --root "D:\Music Collection" --init --db "data/library.db"
+python -m aft.scripts.scan_library scan "D:\Music Collection" --init --db "data/library.db"
 ```
 
 ## Step 3: Choose Your Interface
@@ -50,13 +46,13 @@ Then:
 
 ```bash
 # Preview what will happen (dry run)
-python -m aft.scripts.ingest \
+python -m aft.scripts.ingest ingest \
     --source "D:\Soulseek Downloads\complete" \
     --dest "D:\Music Collection" \
     --dry-run
 
 # Actually process files
-python -m aft.scripts.ingest \
+python -m aft.scripts.ingest ingest \
     --source "D:\Soulseek Downloads\complete" \
     --dest "D:\Music Collection"
 ```
@@ -64,7 +60,7 @@ python -m aft.scripts.ingest \
 ## Step 4: Scan Your Library (1 minute)
 
 ```bash
-python -m aft.scripts.scan_library --root "D:\Music Collection"
+python -m aft.scripts.scan_library scan "D:\Music Collection"
 ```
 
 ## Step 5: Query Your Music (10 seconds)
@@ -89,7 +85,7 @@ python -m aft.scripts.ingest analyze-bpm "path/to/track.mp3"
 
 ```bash
 # Only scan new/modified files (fast)
-python -m aft.scripts.scan_library --root "D:\Music Collection" --incremental
+python -m aft.scripts.scan_library scan "D:\Music Collection" --incremental
 ```
 
 ### Batch BPM Analysis (Python)
@@ -109,7 +105,7 @@ print(f"Analyzed {len(results)} files")
 1. **Download music** → `D:\Soulseek Downloads\complete`
 2. **Run ingest**: 
    ```bash
-   python -m aft.scripts.ingest --source "D:\Soulseek Downloads\complete" --dest "D:\Music Collection"
+   python -m aft.scripts.ingest ingest --source "D:\Soulseek Downloads\complete" --dest "D:\Music Collection"
    ```
 3. **Files are**:
    - Analyzed for BPM
@@ -120,10 +116,10 @@ print(f"Analyzed {len(results)} files")
 ## Troubleshooting
 
 ### "Cannot import aft"
-→ Make sure you're in the project directory and activated the venv:
+→ Make sure you're in the project directory and use `uv run`, or activate the venv:
 ```bash
 cd audio-files-tagging
-.\.venv\Scripts\activate
+uv run python -m aft.scripts.ingest --help
 ```
 
 ### "Database is locked"

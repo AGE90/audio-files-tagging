@@ -3,10 +3,15 @@ Tests for BPM detection module.
 
 Run with: pytest tests/test_bpm.py -v
 """
+import numpy as np
 import pytest
-from pathlib import Path
 from unittest.mock import Mock, patch
-from aft.bpm import analyze_bpm, write_bpm_tag, analyze_and_tag_bpm
+from aft.bpm import (
+    analyze_bpm,
+    write_bpm_tag,
+    analyze_and_tag_bpm,
+    _correct_octave_error,
+)
 
 
 @pytest.fixture
@@ -24,18 +29,23 @@ def test_analyze_bpm_structure():
          patch('aft.bpm.librosa.beat.beat_track') as mock_beat:
         
         # Mock librosa functions
-        mock_load.return_value = ([0.1] * 1000, 22050)
-        mock_onset.return_value = [0.5] * 100
-        mock_beat.return_value = (128.0, [10, 20, 30, 40])
-        
+        mock_load.return_value = (np.array([0.1] * 25000), 22050)
+        mock_onset.return_value = np.array([0.5] * 100)
+        mock_beat.return_value = (128.0, np.array([10, 20, 30, 40]))
+
         result = analyze_bpm("dummy.mp3")
-        
+
         # Check structure
         assert 'file_path' in result
         assert 'bpm' in result
         assert 'confidence' in result
         assert 'duration' in result
         assert 'samples' in result
+        # bpm/confidence being non-None confirms no exception was swallowed
+        # partway through analysis (the mock data must stay internally
+        # consistent with the real librosa call chain for this to hold).
+        assert result['bpm'] is not None
+        assert result['confidence'] is not None
 
 
 def test_analyze_bpm_returns_float_bpm():
@@ -44,14 +54,13 @@ def test_analyze_bpm_returns_float_bpm():
          patch('aft.bpm.librosa.onset.onset_strength') as mock_onset, \
          patch('aft.bpm.librosa.beat.beat_track') as mock_beat:
         
-        mock_load.return_value = ([0.1] * 1000, 22050)
-        mock_onset.return_value = [0.5] * 100
-        mock_beat.return_value = (128.5, [10, 20, 30, 40])
-        
+        mock_load.return_value = (np.array([0.1] * 25000), 22050)
+        mock_onset.return_value = np.array([0.5] * 100)
+        mock_beat.return_value = (128.5, np.array([10, 20, 30, 40]))
+
         result = analyze_bpm("dummy.mp3")
-        
+
         assert isinstance(result['bpm'], float)
-        assert result['bpm'] == 128.5
 
 
 def test_analyze_bpm_error_handling():
@@ -108,6 +117,65 @@ def test_analyze_and_tag_bpm_integration():
         
         assert result['bpm'] == 128.0
         mock_write.assert_called_once_with("test.mp3", 128.0)
+
+
+def test_correct_octave_error_fixes_half_tempo():
+    """A raw estimate at half the true tempo should be corrected back up."""
+    sr = 22050
+    hop_length = 512
+    frame_rate = sr / hop_length
+    true_bpm = 170.0
+    period_s = 60.0 / true_bpm
+
+    n_frames = int(20.0 * frame_rate)
+    onset_env = np.zeros(n_frames)
+    t = 0.0
+    while t < 20.0:
+        frame = int(round(t * frame_rate))
+        if frame < n_frames:
+            onset_env[frame] = 1.0
+        t += period_s
+
+    wrong_tempo = true_bpm / 2
+    corrected = _correct_octave_error(wrong_tempo, onset_env, sr, hop_length, 60.0, 200.0)
+
+    assert abs(corrected - true_bpm) < 2.0
+
+
+def test_correct_octave_error_fixes_double_tempo():
+    """A raw estimate at double the true tempo should be corrected back down."""
+    sr = 22050
+    hop_length = 512
+    frame_rate = sr / hop_length
+    true_bpm = 170.0
+    period_s = 60.0 / true_bpm
+
+    n_frames = int(20.0 * frame_rate)
+    onset_env = np.zeros(n_frames)
+    t = 0.0
+    while t < 20.0:
+        frame = int(round(t * frame_rate))
+        if frame < n_frames:
+            onset_env[frame] = 1.0
+        t += period_s
+
+    wrong_tempo = true_bpm * 2
+    corrected = _correct_octave_error(wrong_tempo, onset_env, sr, hop_length, 60.0, 400.0)
+
+    assert abs(corrected - true_bpm) < 2.0
+
+
+def test_write_bpm_tag_rejects_implausible_value():
+    """A bounds check must reject garbage BPM values before writing."""
+    with patch('aft.bpm.File') as mock_file:
+        mock_audio = Mock()
+        mock_audio.tags = {}
+        mock_file.return_value = mock_audio
+
+        success = write_bpm_tag("test.mp3", 5.0)
+
+        assert success is False
+        mock_file.assert_not_called()
 
 
 def test_analyze_and_tag_bpm_skip_write():

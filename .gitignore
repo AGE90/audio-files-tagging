@@ -173,3 +173,9 @@ data/
 # Notebook exports
 *.html
 *.ipynb_export/
+
+########################################
+# 🧩 Miscellaneous
+########################################
+CLAUDE.md
+graphify-out/

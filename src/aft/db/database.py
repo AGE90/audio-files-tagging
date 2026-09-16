@@ -5,13 +5,13 @@ import os
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 from sqlalchemy import create_engine, or_, and_
 from sqlalchemy.orm import sessionmaker, Session
 from mutagen import File as MutagenFile  # type: ignore
 
-from aft.db.models import Base, Artist, Release, Track
+from aft.db.models import Base, Track
 from aft.tags import read_audio_tags
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 AUDIO_EXTENSIONS = {'.mp3', '.flac', '.m4a', '.mp4', '.ogg', '.wav'}
 
 
-def get_database_url(db_path: Optional[str] = None) -> str:
+def get_database_url(db_path: str | None = None) -> str:
     """
     Get database URL from environment or parameter.
 
@@ -45,12 +45,12 @@ def get_database_url(db_path: Optional[str] = None) -> str:
     return db_url
 
 
-def get_engine(db_path: Optional[str] = None):
+def get_engine(db_path: str | None = None):
     """Get SQLAlchemy engine."""
     return create_engine(get_database_url(db_path), echo=False, future=True)
 
 
-def get_session_factory(db_path: Optional[str] = None):
+def get_session_factory(db_path: str | None = None):
     """Get SQLAlchemy session factory."""
     engine = get_engine(db_path)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -61,7 +61,7 @@ engine = get_engine()
 SessionLocal = get_session_factory()
 
 
-def init_db(db_path: Optional[str] = None) -> None:
+def init_db(db_path: str | None = None) -> None:
     """
     Initialize database by creating all tables.
 
@@ -75,7 +75,7 @@ def init_db(db_path: Optional[str] = None) -> None:
     logger.info("Database initialized at %s", db_path or 'default location')
 
 
-def get_audio_file_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
+def get_audio_file_metadata(file_path: Path) -> dict[str, Any] | None:
     """
     Extract metadata from an audio file.
 
@@ -158,7 +158,7 @@ def get_audio_file_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def scan_library(base_path: str, db_path: Optional[str] = None) -> None:
+def scan_library(base_path: str, db_path: str | None = None) -> None:
     """
     Perform a full scan of the music library and update the database.
 
@@ -242,7 +242,7 @@ def scan_library(base_path: str, db_path: Optional[str] = None) -> None:
         session.close()
 
 
-def incremental_update(base_path: str, db_path: Optional[str] = None) -> List[str]:
+def incremental_update(base_path: str, db_path: str | None = None) -> list[str]:
     """
     Detect new or modified files in the library and update database.
 
@@ -344,17 +344,17 @@ def incremental_update(base_path: str, db_path: Optional[str] = None) -> List[st
 
 
 def query(
-    session: Optional[Session] = None,
-    artist: Optional[str] = None,
-    album: Optional[str] = None,
-    title: Optional[str] = None,
-    genre: Optional[str] = None,
-    bpm_range: Optional[tuple[float, float]] = None,
-    year_range: Optional[tuple[int, int]] = None,
-    text_search: Optional[str] = None,
-    limit: Optional[int] = None,
-    db_path: Optional[str] = None,
-) -> List[Track]:
+    session: Session | None = None,
+    artist: str | None = None,
+    album: str | None = None,
+    title: str | None = None,
+    genre: str | None = None,
+    bpm_range: tuple[float, float] | None = None,
+    year_range: tuple[int, int] | None = None,
+    text_search: str | None = None,
+    limit: int | None = None,
+    db_path: str | None = None,
+) -> list[Track]:
     """
     Query the music library database with various filters.
 

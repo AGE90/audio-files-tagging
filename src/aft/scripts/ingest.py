@@ -2,13 +2,12 @@
 CLI script for ingesting new music files.
 
 Usage:
-    python -m aft.scripts.ingest --source "D:\\Soulseek Downloads\\complete" --dest "D:\\Music Collection"
-    python -m aft.scripts.ingest --source "D:\\Soulseek Downloads\\complete" --dest "D:\\Music Collection" --dry-run
+    python -m aft.scripts.ingest ingest --source "D:\\Soulseek Downloads\\complete" --dest "D:\\Music Collection"
+    python -m aft.scripts.ingest ingest --source "D:\\Soulseek Downloads\\complete" --dest "D:\\Music Collection" --dry-run
 """
 import logging
 import typer
 from pathlib import Path
-from typing import Optional
 
 from aft.ingest import process_directory
 from aft.credentials import discogs_user_token
@@ -142,7 +141,25 @@ def ingest(
             for result in report.results:
                 if not result.success:
                     typer.secho(f"  - {result.file_path}: {result.message}", fg=typer.colors.RED)
-        
+
+        # Flag low-confidence BPM detections for manual review (still written
+        # to the tag, per the flag-don't-block policy - see aft.bpm).
+        low_confidence_results = [
+            r for r in report.results
+            if r.success and r.metadata
+            and r.metadata.get('bpm_confidence') is not None
+            and r.metadata['bpm_confidence'] < 0.5
+        ]
+        if low_confidence_results:
+            typer.secho("\nLow-confidence BPM detections (review recommended):", fg=typer.colors.YELLOW, bold=True)
+            for result in low_confidence_results:
+                metadata = result.metadata or {}
+                typer.secho(
+                    f"  - {result.new_path or result.file_path}: "
+                    f"BPM {metadata['bpm']} (confidence {metadata['bpm_confidence']:.0%})",
+                    fg=typer.colors.YELLOW,
+                )
+
         # Success message
         if report.processed > 0:
             if dry_run:

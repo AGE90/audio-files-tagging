@@ -16,7 +16,8 @@ This guide provides practical examples and workflows for using the audio-files-t
 
 ### Requirements
 
-- Python 3.10 or 3.11
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) for dependency management
 - Windows 10+ (tested), macOS, or Linux
 - ~500 MB disk space for dependencies
 
@@ -27,27 +28,22 @@ This guide provides practical examples and workflows for using the audio-files-t
 git clone <repository-url>
 cd audio-files-tagging
 
-# Create virtual environment
-python -m venv .venv
+# Create the environment and install dependencies
+uv sync
+```
 
-# Activate virtual environment
+Prefix commands with `uv run`, or activate the environment directly:
+```bash
 # Windows:
 .\.venv\Scripts\activate
 # macOS/Linux:
 source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Or using Poetry
-poetry install
 ```
 
 ### Verify Installation
 
 ```bash
-# Test imports
-python -c "from aft.bpm import analyze_and_tag_bpm; print('✓ Installation successful')"
+uv run python -c "from aft.bpm import analyze_and_tag_bpm; print('✓ Installation successful')"
 ```
 
 ## Initial Setup
@@ -57,20 +53,22 @@ python -c "from aft.bpm import analyze_and_tag_bpm; print('✓ Installation succ
 If you want to use Discogs for metadata enrichment:
 
 1. Get a user token from https://www.discogs.com/settings/developers
-2. Create `src/aft/credentials.py`:
+2. Create a `.env` file in the project root:
 
-```python
-discogs_user_token = "your_token_here"
 ```
+DISCOGS_USER_TOKEN=your_token_here
+```
+
+This is loaded automatically via `python-dotenv` (`aft.credentials`). Both the CLI's `--use-discogs` flag and the GUI's Discogs Lookup tab read from this token.
 
 ### 2. Initialize Database
 
 ```bash
 # Initialize database with default location (data/library.db)
-python -m aft.scripts.scan_library --root "D:\Music Collection" --init
+python -m aft.scripts.scan_library scan "D:\Music Collection" --init
 
 # Or specify custom location
-python -m aft.scripts.scan_library --root "D:\Music Collection" --db "my_music.db" --init
+python -m aft.scripts.scan_library scan "D:\Music Collection" --db "my_music.db" --init
 ```
 
 ### 3. Configure Paths
@@ -85,10 +83,10 @@ Edit the default paths in CLI scripts or GUI if your directories differ:
 
 ```bash
 # 1. Initialize database
-python -m aft.scripts.scan_library --root "D:\Music Collection" --init
+python -m aft.scripts.scan_library scan "D:\Music Collection" --init
 
 # 2. Scan existing library
-python -m aft.scripts.scan_library --root "D:\Music Collection"
+python -m aft.scripts.scan_library scan "D:\Music Collection"
 
 # 3. Check database
 python -m aft.scripts.scan_library query-db --limit 10
@@ -98,18 +96,18 @@ python -m aft.scripts.scan_library query-db --limit 10
 
 ```bash
 # 1. Preview changes (dry run)
-python -m aft.scripts.ingest \
+python -m aft.scripts.ingest ingest \
     --source "D:\Soulseek Downloads\complete" \
     --dest "D:\Music Collection" \
     --dry-run
 
 # 2. Execute ingest with BPM analysis
-python -m aft.scripts.ingest \
+python -m aft.scripts.ingest ingest \
     --source "D:\Soulseek Downloads\complete" \
     --dest "D:\Music Collection"
 
 # 3. Update database
-python -m aft.scripts.scan_library --root "D:\Music Collection" --incremental
+python -m aft.scripts.scan_library scan "D:\Music Collection" --incremental
 ```
 
 ### Workflow 3: Analyze BPM for Existing Library
@@ -153,40 +151,40 @@ python -m aft.scripts.scan_library query-db \
 
 ```bash
 # Full scan
-python -m aft.scripts.scan_library --root "D:\Music Collection"
+python -m aft.scripts.scan_library scan "D:\Music Collection"
 
 # Incremental update (faster)
-python -m aft.scripts.scan_library --root "D:\Music Collection" --incremental
+python -m aft.scripts.scan_library scan "D:\Music Collection" --incremental
 
 # With custom database
-python -m aft.scripts.scan_library --root "D:\Music Collection" --db "my_db.db"
+python -m aft.scripts.scan_library scan "D:\Music Collection" --db "my_db.db"
 
 # Initialize database first
-python -m aft.scripts.scan_library --root "D:\Music Collection" --init
+python -m aft.scripts.scan_library scan "D:\Music Collection" --init
 ```
 
 ### Ingest Files
 
 ```bash
 # Dry run (preview only)
-python -m aft.scripts.ingest \
+python -m aft.scripts.ingest ingest \
     --source "D:\Downloads" \
     --dest "D:\Music Collection" \
     --dry-run
 
 # Full ingest with BPM
-python -m aft.scripts.ingest \
+python -m aft.scripts.ingest ingest \
     --source "D:\Downloads" \
     --dest "D:\Music Collection"
 
 # Skip BPM analysis (faster)
-python -m aft.scripts.ingest \
+python -m aft.scripts.ingest ingest \
     --source "D:\Downloads" \
     --dest "D:\Music Collection" \
     --skip-bpm
 
 # With Discogs metadata lookup
-python -m aft.scripts.ingest \
+python -m aft.scripts.ingest ingest \
     --source "D:\Downloads" \
     --dest "D:\Music Collection" \
     --use-discogs
@@ -213,14 +211,24 @@ python -m aft.scripts.scan_library query-db --artist "Aphex Twin" --limit 5
 ### Launch GUI
 
 ```bash
-python -m aft.gui.main --db "data/library.db"
+uv run python -m aft.gui.main --db "data/library.db"
 ```
+
+The window has four tabs: Dashboard, Discogs Lookup, Query, and Ingest. They are independent - loading files in one tab doesn't carry over to another.
 
 ### Dashboard Tab
 
 - View library statistics (total tracks, tracks with BPM)
 - See recent files
 - Click "Refresh Statistics" to update
+
+### Discogs Lookup Tab
+
+1. Load one or more audio files
+2. Search Discogs (artist/release fields auto-fill from the first file's tags)
+3. Select a matching release from the results
+4. Review/edit the auto-populated metadata form (genre and styles are combined into one editable field, semicolon-separated)
+5. Confirm to apply metadata to the loaded files
 
 ### Ingest Tab
 
@@ -231,6 +239,8 @@ python -m aft.gui.main --db "data/library.db"
 5. Click "Start Ingest"
 6. Monitor progress in log window
 
+Note: this tab does not perform Discogs lookups - use the Discogs Lookup tab for that, or `--use-discogs` on the CLI.
+
 ### Query Tab
 
 1. Enter search criteria:
@@ -240,6 +250,7 @@ python -m aft.gui.main --db "data/library.db"
 2. Click "Search"
 3. View results in table
 4. Double-click row to see file path
+5. Edit a track's BPM cell directly to correct a wrong detection - it's written straight to the file's tag (values outside 20-300 BPM are rejected)
 
 ## Python API
 
@@ -359,7 +370,7 @@ print(f"Average BPM: {avg_bpm:.2f}")
 
 ```bash
 cd audio-files-tagging
-pip install -r requirements.txt
+uv sync
 ```
 
 #### 2. Database Locked Error
@@ -374,14 +385,15 @@ session = SessionLocal()
 session.close()  # Always close when done
 ```
 
-#### 3. BPM Detection Returns None
+#### 3. BPM Detection Returns None or Looks Wrong
 
 **Possible causes**:
 - File is corrupted
 - Audio is too short (< 10 seconds)
 - No clear beat/rhythm
+- Half/double-tempo (octave) error - detection includes automatic correction for this within a 60-200 BPM plausible range, but very fast (>200 BPM) or very slow (<60 BPM) genres may still be misjudged
 
-**Solution**: Check file integrity and try manual BPM input if needed.
+**Solution**: Check file integrity, or correct the value directly in the GUI's Query tab (edit the BPM cell - it writes straight to the file's tag).
 
 #### 4. Librosa Installation Issues
 

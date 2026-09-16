@@ -4,10 +4,9 @@ Tests for database module.
 Run with: pytest tests/test_database.py -v
 """
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 from aft.db.database import init_db, scan_library, incremental_update, query
-from aft.db.models import Base, Track, Artist, Release
+from aft.db.models import Track
 
 
 @pytest.fixture

@@ -71,10 +71,16 @@ The ingest pipeline is the core workflow for processing new music files:
    - Handles various audio formats (MP3, FLAC, M4A, OGG)
 
 3. **BPM Analyzer** (`aft.bpm`)
-   - Uses librosa for robust BPM detection
-   - Supports wide tempo ranges (60-200 BPM)
-   - Handles tempo drift and provides confidence scores
-   - Optionally integrates essentia or aubio for enhanced detection
+   - Uses librosa for beat tracking, with an additional octave-error
+     correction pass (half/double-tempo) that scores tempo/2x/0.5x
+     candidates against onset-envelope autocorrelation and picks the
+     best-supported one within a configurable plausible range
+     (default 60-200 BPM)
+   - Confidence score reflects beat-strength consistency, not tempo
+     correctness; low-confidence detections are still written but flagged
+     for review (CLI `ingest` summary; GUI Query tab lets you correct a
+     wrong value directly, writing straight to the file's tag)
+   - A sanity bound (20-300 BPM) rejects implausible values before write
 
 4. **Tag Writer** (`aft.tags`)
    - Unified interface for writing tags across formats
@@ -119,10 +125,10 @@ Built with **Typer** for type-safe CLI applications.
 **Example Usage**:
 ```bash
 # Full library scan
-python -m aft.scripts.scan_library --root "D:\Music Collection" --init
+python -m aft.scripts.scan_library scan "D:\Music Collection" --init
 
 # Ingest new files
-python -m aft.scripts.ingest --source "D:\Soulseek Downloads\complete" --dest "D:\Music Collection"
+python -m aft.scripts.ingest ingest --source "D:\Soulseek Downloads\complete" --dest "D:\Music Collection"
 
 # Analyze single file BPM
 python -m aft.scripts.ingest analyze-bpm "track.mp3"
@@ -132,11 +138,11 @@ python -m aft.scripts.ingest analyze-bpm "track.mp3"
 
 Built with **PySide6** (Qt for Python) for native desktop experience.
 
-**Features** (`aft.gui.main`):
+**Features** (`aft.gui.main`), four independent tabs (no shared state between them):
 - **Dashboard**: Library statistics, recent activity
-- **Ingest Wizard**: Configure and run ingest operations
-- **Query Interface**: Search by artist, album, BPM range
-- **Progress Tracking**: Real-time logging and progress bars
+- **Discogs Lookup**: Search Discogs, review/edit metadata (genre+styles combined into one editable field), apply to loaded files
+- **Query**: Search by artist, album, BPM range; edit a track's BPM cell directly to correct a wrong detection
+- **Ingest**: Configure and run ingest operations, with real-time logging and progress bars (does not perform Discogs lookups - use the Discogs Lookup tab or CLI `--use-discogs` for that)
 
 **Launch**:
 ```bash
@@ -172,9 +178,11 @@ tracks = query(artist="Daft Punk", bpm_range=(120, 130))
 
 Optional integration for enhanced metadata:
 - Artist information lookup
-- Release details (label, catalog number, genres)
+- Release details (label, catalog number, genres, styles)
 - Track listings and metadata
-- Requires API token (set in credentials)
+- Requires a `DISCOGS_USER_TOKEN` env var (`.env` file, loaded via `aft.credentials`)
+
+Wired into `aft.ingest.process_audio_file`/`process_directory` via the `discogs_client` parameter (CLI: `--use-discogs`): applies the top search match for the detected artist/album through `aft.tags.write_audio_tags`, with no human review step. The GUI's Discogs Lookup tab is the human-reviewed alternative and is unaffected by this wiring (the GUI's Ingest tab doesn't pass a `discogs_client`).
 
 ## Data Flow
 
@@ -204,7 +212,8 @@ Optional integration for enhanced metadata:
 
 ## Technology Stack
 
-- **Language**: Python 3.10+
+- **Language**: Python 3.12+
+- **Package management**: uv
 - **Audio Processing**: librosa, mutagen
 - **Database**: SQLite + SQLAlchemy
 - **CLI**: Typer
@@ -218,13 +227,13 @@ Optional integration for enhanced metadata:
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 
 # Initialize database
-python -m aft.scripts.scan_library --root "D:\Music Collection" --init
+uv run python -m aft.scripts.scan_library scan "D:\Music Collection" --init
 
 # Run tests
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ### Packaging (Future)

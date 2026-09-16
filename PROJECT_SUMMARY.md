@@ -93,8 +93,8 @@ The **audio-files-tagging** project has been successfully extended and refactore
 
 **Usage Examples**:
 ```bash
-python -m aft.scripts.scan_library --root "D:\Music Collection" --init
-python -m aft.scripts.ingest --source "D:\Downloads" --dest "D:\Music Collection"
+python -m aft.scripts.scan_library scan "D:\Music Collection" --init
+python -m aft.scripts.ingest ingest --source "D:\Downloads" --dest "D:\Music Collection"
 python -m aft.scripts.scan_library query-db --artist "Daft Punk" --bpm-min 120 --bpm-max 130
 ```
 
@@ -104,12 +104,17 @@ python -m aft.scripts.scan_library query-db --artist "Daft Punk" --bpm-min 120 -
 
 **Features**:
 - PySide6-based desktop application
-- Three main tabs:
+- Four independent tabs (no shared state between them):
 
 **Dashboard Tab**:
 - Library statistics
 - Recent files table
 - Refresh button
+
+**Discogs Lookup Tab**:
+- Search Discogs, select a release
+- Review/edit auto-populated metadata (genre+styles combined into one editable field)
+- Apply to loaded files, with confirmation dialog
 
 **Ingest Tab**:
 - Source/destination selection
@@ -118,13 +123,15 @@ python -m aft.scripts.scan_library query-db --artist "Daft Punk" --bpm-min 120 -
 - Progress bar
 - Real-time logging
 - Background thread processing
+- Does not perform Discogs lookups (use the Discogs Lookup tab, or CLI `--use-discogs`)
 
 **Query Tab**:
 - Search by artist, album, BPM range
 - Results table with sortable columns
 - File path display
+- Editable BPM cell - corrects a wrong detection by writing straight to the file's tag
 
-**Launch**: `python -m aft.gui.main --db "data/library.db"`
+**Launch**: `uv run python -m aft.gui.main --db "data/library.db"`
 
 ### 7. Testing Suite (`tests/`)
 
@@ -181,10 +188,6 @@ python -m aft.scripts.scan_library query-db --artist "Daft Punk" --bpm-min 120 -
 - Feature list
 - Quick start guide
 
-**requirements.txt**:
-- All dependencies listed
-- Development dependencies included
-
 ## Project Structure
 
 ```
@@ -192,48 +195,58 @@ audio-files-tagging/
 ├── src/
 │   └── aft/
 │       ├── __init__.py
-│       ├── bpm.py              ✅ NEW - BPM detection
-│       ├── tags.py             ✅ NEW - Unified tag interface
-│       ├── ingest.py           ✅ NEW - Ingest pipeline
-│       ├── audio_tagger.py     (legacy - can be removed)
-│       ├── discogs_client.py   (existing - enhanced)
-│       ├── credentials.py      (existing)
+│       ├── bpm.py              BPM detection, with octave-error correction
+│       ├── tags.py             Unified tag interface (MP3/FLAC/M4A/OGG)
+│       ├── ingest.py           Ingest pipeline (Discogs-wired)
+│       ├── discogs_client.py
+│       ├── credentials.py
 │       ├── db/
 │       │   ├── __init__.py
-│       │   ├── database.py     ✅ ENHANCED - Scan & query functions
-│       │   └── models.py       ✅ FIXED - Updated schema
+│       │   ├── database.py     Scan & query functions
+│       │   └── models.py
 │       ├── utils/
 │       │   ├── __init__.py
 │       │   ├── normalization.py
 │       │   └── paths.py
-│       ├── scripts/            ✅ NEW
+│       ├── scripts/
 │       │   ├── __init__.py
 │       │   ├── scan_library.py
 │       │   └── ingest.py
-│       └── gui/                ✅ NEW
+│       └── gui/
 │           ├── __init__.py
-│           └── main.py
-├── tests/                      ✅ NEW
+│           ├── main.py
+│           ├── constants.py
+│           ├── styles.py
+│           └── widgets/
+│               ├── dashboard.py
+│               ├── discogs.py
+│               ├── ingest.py
+│               └── query.py
+├── tests/
 │   ├── __init__.py
 │   ├── test_bpm.py
 │   ├── test_tags.py
+│   ├── test_ingest.py
 │   └── test_database.py
 ├── docs/
-│   ├── architecture.md         ✅ NEW
-│   ├── usage.md               ✅ NEW
-│   └── install.md             (existing)
+│   ├── architecture.md
+│   ├── usage.md
+│   └── install.md
 ├── notebooks/
 │   └── AGE90-audio_files_tagging.ipynb  (existing)
 ├── data/                      (for database)
 ├── logs/                      (for logging)
-├── pyproject.toml             ✅ UPDATED - Dependencies added
-├── requirements.txt           ✅ NEW
+├── pyproject.toml
+├── uv.lock
 └── README.md                  (existing - reference document)
 ```
 
+Note: the legacy `main.py` and `src/aft/audio_tagger.py` mentioned in the Migration Notes below have since been removed - their working logic was ported into `aft.ingest`/`aft.tags`.
+
 ## Key Technologies Used
 
-- **Python 3.10+**: Core language
+- **Python 3.12+**: Core language
+- **uv**: Package/dependency management
 - **librosa**: BPM detection and audio analysis
 - **mutagen**: Cross-format tag reading/writing
 - **SQLAlchemy**: ORM for database operations
@@ -249,25 +262,25 @@ audio-files-tagging/
 
 ```bash
 cd audio-files-tagging
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 2. Initialize Database
 
 ```bash
-python -m aft.scripts.scan_library --root "D:\Music Collection" --init
+uv run python -m aft.scripts.scan_library scan "D:\Music Collection" --init
 ```
 
 ### 3. Run Initial Scan
 
 ```bash
-python -m aft.scripts.scan_library --root "D:\Music Collection"
+uv run python -m aft.scripts.scan_library scan "D:\Music Collection"
 ```
 
 ### 4. Test Ingest (Dry Run)
 
 ```bash
-python -m aft.scripts.ingest \
+uv run python -m aft.scripts.ingest \
     --source "D:\Soulseek Downloads\complete" \
     --dest "D:\Music Collection" \
     --dry-run
@@ -276,20 +289,20 @@ python -m aft.scripts.ingest \
 ### 5. Launch GUI
 
 ```bash
-python -m aft.gui.main --db "data/library.db"
+uv run python -m aft.gui.main --db "data/library.db"
 ```
 
 ### 6. Run Tests
 
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
-## Migration Notes
+## Migration Notes (historical)
 
 ### From Existing Code
 
-The old `audio_tagger.py` has been replaced by the more comprehensive `tags.py`. To migrate:
+This migration is complete - `main.py` and `audio_tagger.py` have been removed from the repository. Kept here for reference on how the old API mapped to the current one:
 
 **Old**:
 ```python
@@ -329,10 +342,9 @@ from aft.db import query, scan_library
 ## Known Limitations & Future Work
 
 1. **BPM Detection**: May struggle with:
-   - Very slow tempos (< 60 BPM)
-   - Very fast tempos (> 200 BPM)
+   - Tempos outside the default 60-200 BPM plausible range used for octave-error correction (configurable via `BPMAnalysisConfig.bpm_min`/`bpm_max`)
    - Tracks with tempo changes
-   - Solution: Add manual BPM override in GUI
+   - Manual override is available: the GUI's Query tab lets you edit a track's BPM cell directly, writing straight to the file's tag
 
 2. **No Key Detection**: Planned for future release
 

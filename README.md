@@ -129,23 +129,21 @@ Features:
 ## Quick start (Windows)
 
 1. Clone the repository.
-2. Create a venv and install:
+2. Install with [uv](https://docs.astral.sh/uv/):
 ```bash
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
+uv sync
 ````
 
 3. Run a full scan (dry run first):
 
 ```bash
-python -m aft.scripts.scan_library --root "D:\Music Collection" --db "data/library.db" --dry-run
+python -m aft.scripts.scan_library scan "D:\Music Collection" --db "data/library.db"
 ```
 
 4. Ingest new downloads:
 
 ```bash
-python -m aft.scripts.ingest --source "D:\Soulseek Downloads\complete" --dest "D:\Music Collection" --db "data/library.db"
+python -m aft.scripts.ingest ingest --source "D:\Soulseek Downloads\complete" --dest "D:\Music Collection" --db "data/library.db"
 ```
 
 5. Start GUI (if using PySide6 UI):
@@ -346,7 +344,7 @@ if __name__ == "__main__":
 **Scan**
 
 ```bash
-python -m aft.scripts.scan_library --root "D:\Music Collection" --db "data/library.db" --dry-run
+python -m aft.scripts.scan_library scan "D:\Music Collection" --db "data/library.db"
 ```
 
 **Run GUI**
