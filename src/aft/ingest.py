@@ -10,6 +10,7 @@ Orchestrates the full workflow:
 6. Update database
 """
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -440,42 +441,53 @@ def process_directory(
         else:
             report.failed += 1
 
-    # Move image files to corresponding album directories
+    # Move image files to corresponding album directories. Audio files were
+    # already moved out of source_path by the loop above, so a sibling
+    # lookup must go through report.results (which still has each audio
+    # file's original pre-move path) rather than re-scanning the now-empty
+    # source directory.
     if not dry_run:
         for image_file in image_files:
             try:
-                # Try to determine which album this belongs to
-                # by looking at the directory structure
-                relative = image_file.relative_to(source_path)
-                parent_dir = relative.parent
+                audio_result = next(
+                    (r for r in report.results
+                     if Path(r.file_path).parent == image_file.parent
+                     and r.success and r.new_path),
+                    None
+                )
 
-                # Look for audio files in same directory to determine destination
-                sibling_audio = list(image_file.parent.glob('*.[mM][pP]3'))
-                sibling_audio.extend(
-                    image_file.parent.glob('*.[fF][lL][aA][cC]'))
+                if audio_result:
+                    dest_image_dir = Path(audio_result.new_path).parent
+                    dest_image_path = dest_image_dir / image_file.name
 
-                if sibling_audio:
-                    # Use first audio file to determine destination
-                    first_audio = sibling_audio[0]
-
-                    # Find corresponding result for this audio file
-                    audio_result = next(
-                        (r for r in report.results if Path(
-                            r.file_path) == first_audio),
-                        None
-                    )
-
-                    if audio_result and audio_result.new_path:
-                        # Copy image to same directory as audio file
-                        dest_image_dir = Path(audio_result.new_path).parent
-                        dest_image_path = dest_image_dir / image_file.name
-
-                        if not dest_image_path.exists():
-                            shutil.copy2(str(image_file), str(dest_image_path))
-                            logger.info("Copied cover art: %s", dest_image_path)
+                    if not dest_image_path.exists():
+                        shutil.move(str(image_file), str(dest_image_path))
+                        logger.info("Moved cover art: %s", dest_image_path)
+                    else:
+                        logger.warning(
+                            "Cover art already exists at destination, "
+                            "leaving source in place: %s", dest_image_path)
 
             except (OSError, ValueError) as e:
                 logger.warning("Could not process image %s: %s", image_file, e)
+
+    # Remove now-empty directories left behind in the source tree (including
+    # source_path itself, e.g. when ingesting a single release folder).
+    # Bottom-up so a directory only empties out after its children are
+    # already gone; rmdir is a no-op (caught) on anything not actually empty,
+    # so this never touches a directory with leftover files.
+    if not dry_run:
+        dirs_to_check = [source_path]
+        for dirpath, dirnames, _ in os.walk(source_path):
+            dirs_to_check.extend(Path(dirpath) / d for d in dirnames)
+
+        dirs_to_check.sort(key=lambda p: len(p.parts), reverse=True)
+        for directory in dirs_to_check:
+            try:
+                directory.rmdir()
+                logger.info("Removed empty directory: %s", directory)
+            except OSError:
+                pass  # Not empty (or already gone) - leave it alone
 
     # Update database if not dry run
     if not dry_run and db_path:
