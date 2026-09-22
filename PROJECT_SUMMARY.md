@@ -33,6 +33,7 @@ The **audio-files-tagging** project has been successfully extended and refactore
 - AudioTags class with `read_tags()` and `write_tags()` methods
 - Convenience functions: `read_audio_tags()`, `write_audio_tags()`
 - Handles complex fields: genre merging, publishers, catalog numbers
+- Cover art embedding across all four formats: `embed_cover_art(file_path, image_path)`
 - Properly typed and documented
 
 ### 3. Database Layer (`src/aft/db/`)
@@ -346,13 +347,21 @@ from aft.db import query, scan_library
    - Tracks with tempo changes
    - Manual override is available: the GUI's Query tab lets you edit a track's BPM cell directly, writing straight to the file's tag
 
-2. **No Key Detection**: Planned for future release
+2. **Key Detection**: Implemented (`src/aft/key.py`, chroma correlation against
+   Krumhansl-Schmuckler profiles). Same caveats as BPM apply - short/atonal/heavily
+   effected tracks reduce confidence.
 
 3. **No Duplicate Detection**: Planned for future release
 
 4. **Single-threaded Processing**: Future: Add multiprocessing for batch operations
 
 5. **No Watch Mode**: Future: Add file system watcher for automatic ingest
+
+6. **Discogs-only Metadata Lookup**: The Metadata Tools tab only searches Discogs.
+   Planned for future release: an alternate lookup source (e.g. MusicBrainz) for
+   releases that aren't on Discogs at all - `aft.discogs_client.DiscogsClient` would
+   need a sibling client with the same search/get_release_by_id shape so the GUI
+   can swap sources without restructuring the tab.
 
 ## API Stability
 

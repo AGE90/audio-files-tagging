@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QThread, Signal
 
-from aft.db.database import get_session_factory, incremental_update
+from aft.db.database import get_session_factory, incremental_update, find_orphaned_tracks, remove_orphaned_tracks
 from aft.db.models import Track
 
 from ..constants import DASHBOARD_COLUMNS, DEFAULT_DEST_DIR, TABLE_COLUMN_WIDTH_PATH
@@ -46,6 +46,34 @@ class RescanWorker(QThread):
             self.error.emit(str(e))
 
 
+class VerifyWorker(QThread):
+    """Worker thread for finding orphaned track rows (file no longer exists)."""
+
+    finished = Signal(list)  # List of {'id', 'file_path', 'artist', 'album', 'title'}
+    error = Signal(str)
+
+    def __init__(self, db_path: str):
+        super().__init__()
+        self.db_path = db_path
+
+    def run(self):
+        try:
+            orphans = find_orphaned_tracks(self.db_path)
+            self.finished.emit([
+                {
+                    'id': t.id,
+                    'file_path': t.file_path,
+                    'artist': t.artist,
+                    'album': t.album,
+                    'title': t.title,
+                }
+                for t in orphans
+            ])
+        except (OSError, RuntimeError, ValueError) as e:
+            logger.error("Verify error: %s", str(e))
+            self.error.emit(str(e))
+
+
 class DashboardWidget(QWidget):
     """Dashboard showing library statistics and recent activity."""
 
@@ -53,6 +81,7 @@ class DashboardWidget(QWidget):
         super().__init__(parent)
         self.db_path = db_path
         self.rescan_worker = None
+        self.verify_worker = None
         self.init_ui()
 
     def init_ui(self):
@@ -98,6 +127,10 @@ class DashboardWidget(QWidget):
         self.rescan_btn.clicked.connect(self.start_rescan)
         rescan_layout.addWidget(self.rescan_btn)
 
+        self.verify_btn = QPushButton("Verify Library")
+        self.verify_btn.clicked.connect(self.start_verify)
+        rescan_layout.addWidget(self.verify_btn)
+
         layout.addLayout(rescan_layout)
 
         self.setLayout(layout)
@@ -135,6 +168,56 @@ class DashboardWidget(QWidget):
         """Handle rescan failure."""
         self.rescan_btn.setEnabled(True)
         QMessageBox.critical(self, "Rescan Error", f"Error rescanning library:\n{message}")
+        self.load_statistics()
+
+    def start_verify(self):
+        """Kick off an orphaned-track scan in a background thread.
+
+        Orphans accumulate whenever a file is moved/renamed/deleted
+        outside the scan/ingest flow (which is the only thing that keeps
+        Track.file_path in sync with the filesystem).
+        """
+        self.verify_btn.setEnabled(False)
+        self.stats_label.setText("Verifying library...")
+
+        self.verify_worker = VerifyWorker(self.db_path)
+        self.verify_worker.finished.connect(self.on_verify_finished)
+        self.verify_worker.error.connect(self.on_verify_error)
+        self.verify_worker.start()
+
+    def on_verify_finished(self, orphans: list):
+        """Handle completion of the orphan scan."""
+        self.verify_btn.setEnabled(True)
+
+        if not orphans:
+            self.load_statistics()
+            QMessageBox.information(
+                self, "Verify Library", "No orphaned tracks found - the database is in sync.")
+            return
+
+        preview = "\n".join(
+            f"  • {o['artist']} - {o['title']} ({o['file_path']})" for o in orphans[:10]
+        )
+        if len(orphans) > 10:
+            preview += f"\n  ...and {len(orphans) - 10} more"
+
+        reply = QMessageBox.question(
+            self, "Orphaned Tracks Found",
+            f"Found {len(orphans)} track(s) whose file no longer exists:\n\n{preview}\n\n"
+            "Remove these rows from the database?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            removed = remove_orphaned_tracks(self.db_path)
+            QMessageBox.information(
+                self, "Verify Library", f"Removed {removed} orphaned track(s).")
+
+        self.load_statistics()
+
+    def on_verify_error(self, message: str):
+        """Handle verify failure."""
+        self.verify_btn.setEnabled(True)
+        QMessageBox.critical(self, "Verify Error", f"Error verifying library:\n{message}")
         self.load_statistics()
 
     def load_statistics(self):

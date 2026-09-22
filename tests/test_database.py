@@ -5,7 +5,10 @@ Run with: pytest tests/test_database.py -v
 """
 import pytest
 from unittest.mock import patch
-from aft.db.database import init_db, scan_library, incremental_update, query
+from aft.db.database import (
+    init_db, scan_library, incremental_update, query,
+    update_track_path, find_orphaned_tracks, remove_orphaned_tracks,
+)
 from aft.db.models import Track
 
 
@@ -211,6 +214,54 @@ def test_incremental_update_detects_new_files(temp_db, tmp_path):
         }
         
         updated = incremental_update(str(music_dir), temp_db)
-        
+
         assert len(updated) == 1
         assert str(music_dir / 'track2.mp3') in updated[0]
+
+
+def test_update_track_path(temp_db):
+    """Renaming a file should be reflected in its Track row."""
+    from aft.db.database import get_session_factory
+
+    session_factory = get_session_factory(temp_db)
+    session = session_factory()
+    session.add(Track(title="T", artist="A", album="Al", file_path="/old/path.mp3"))
+    session.commit()
+    session.close()
+
+    assert update_track_path("/old/path.mp3", "/new/path.mp3", db_path=temp_db) is True
+
+    results = query(db_path=temp_db)
+    assert results[0].file_path == "/new/path.mp3"
+
+
+def test_update_track_path_missing_row(temp_db):
+    """Updating a path with no matching row should report failure, not raise."""
+    assert update_track_path("/nope.mp3", "/new/path.mp3", db_path=temp_db) is False
+
+
+def test_find_and_remove_orphaned_tracks(temp_db, tmp_path):
+    """Rows whose file no longer exists should be found and removable;
+    rows whose file still exists must be left alone."""
+    from aft.db.database import get_session_factory
+
+    real_file = tmp_path / "real.mp3"
+    real_file.touch()
+
+    session_factory = get_session_factory(temp_db)
+    session = session_factory()
+    session.add(Track(title="Real", artist="A", album="Al", file_path=str(real_file)))
+    session.add(Track(title="Gone", artist="A", album="Al", file_path=str(tmp_path / "gone.mp3")))
+    session.commit()
+    session.close()
+
+    orphans = find_orphaned_tracks(db_path=temp_db)
+    assert len(orphans) == 1
+    assert orphans[0].title == "Gone"
+
+    removed = remove_orphaned_tracks(db_path=temp_db)
+    assert removed == 1
+
+    remaining = query(db_path=temp_db)
+    assert len(remaining) == 1
+    assert remaining[0].title == "Real"

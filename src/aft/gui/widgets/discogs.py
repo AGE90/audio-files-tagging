@@ -3,6 +3,7 @@ Discogs lookup widget for fetching and applying metadata from Discogs API.
 """
 import logging
 from difflib import SequenceMatcher
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -13,8 +14,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal
 
 from aft.discogs_client import DiscogsClient
-from aft.tags import read_audio_tags, write_audio_tags
+from aft.tags import read_audio_tags, write_audio_tags, embed_cover_art
 from aft.bpm import analyze_and_tag_bpm
+from aft.key import analyze_and_tag_key
+from aft.ingest import normalize_filename
+from aft.db.database import update_track_path
 from aft import credentials
 from ..constants import (
     DISCOGS_RESULTS_COLUMNS, DISCOGS_MAX_RESULTS,
@@ -38,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class ApplyMetadataWorker(QThread):
-    """Worker thread for writing metadata (and optionally BPM) to files."""
+    """Worker thread for writing metadata (and optionally BPM/key) to files."""
 
     finished = Signal(int, list)  # success_count, errors
 
@@ -46,11 +50,13 @@ class ApplyMetadataWorker(QThread):
         self,
         file_metadata: list[tuple[str, dict]],
         analyze_bpm: bool,
+        analyze_key: bool = False,
         dry_run: bool = False,
     ):
         super().__init__()
         self.file_metadata = file_metadata
         self.analyze_bpm = analyze_bpm
+        self.analyze_key = analyze_key
         self.dry_run = dry_run
 
     def run(self):
@@ -68,6 +74,14 @@ class ApplyMetadataWorker(QThread):
                             file_path, write_tag=not self.dry_run)
                         logger.info(
                             "BPM analysis for %s: %s", file_path, bpm_result.get('bpm'))
+
+                if self.analyze_key:
+                    existing_key = read_audio_tags(file_path).get('key')
+                    if not existing_key:
+                        key_result = analyze_and_tag_key(
+                            file_path, write_tag=not self.dry_run)
+                        logger.info(
+                            "Key analysis for %s: %s", file_path, key_result.get('key'))
 
                 if self.dry_run:
                     logger.info(
@@ -90,8 +104,9 @@ class ApplyMetadataWorker(QThread):
 class DiscogsLookupWidget(QWidget):
     """Widget for looking up and applying metadata from Discogs."""
 
-    def __init__(self, parent=None):
+    def __init__(self, db_path: str, parent=None):
         super().__init__(parent)
+        self.db_path = db_path
         self.discogs_client = None
         # Store list of loaded tracks with their metadata
         # Each item: {"file_path": str, "metadata": dict, "discogs_match": dict}
@@ -278,11 +293,42 @@ class DiscogsLookupWidget(QWidget):
         tracklist_group.setLayout(tracklist_group_layout)
         right_splitter.addWidget(tracklist_group)
 
+        # Additional tools: cover art embedding and filename normalization,
+        # both operating on the currently loaded tracks. This is the home
+        # for future tagging tools beyond Discogs lookup.
+        tools_group = QGroupBox("Additional Tools")
+        tools_group_layout = QVBoxLayout()
+
+        cover_art_layout = QHBoxLayout()
+        cover_art_layout.addWidget(QLabel("Cover Art:"))
+        self.cover_art_input = QLineEdit()
+        cover_art_layout.addWidget(self.cover_art_input)
+        cover_art_browse_btn = QPushButton("Browse...")
+        cover_art_browse_btn.clicked.connect(self.browse_cover_art)
+        cover_art_layout.addWidget(cover_art_browse_btn)
+        self.embed_cover_art_btn = QPushButton("Embed in Loaded Tracks")
+        self.embed_cover_art_btn.clicked.connect(self.embed_cover_art_to_tracks)
+        cover_art_layout.addWidget(self.embed_cover_art_btn)
+        tools_group_layout.addLayout(cover_art_layout)
+
+        filename_layout = QHBoxLayout()
+        self.fix_filenames_btn = QPushButton("Fix Filenames in Loaded Tracks")
+        self.fix_filenames_btn.clicked.connect(self.fix_filenames)
+        filename_layout.addWidget(self.fix_filenames_btn)
+        self.tools_status_label = QLabel("")
+        filename_layout.addWidget(self.tools_status_label, 1)
+        tools_group_layout.addLayout(filename_layout)
+
+        tools_group.setLayout(tools_group_layout)
+        right_splitter.addWidget(tools_group)
+
         # Results and tracklist (the two tables) get most of the resizable
-        # space; the metadata form only needs its natural height
+        # space; the metadata form and tools panel only need their natural
+        # height
         right_splitter.setStretchFactor(0, 2)
         right_splitter.setStretchFactor(1, 0)
         right_splitter.setStretchFactor(2, 2)
+        right_splitter.setStretchFactor(3, 0)
 
         right_layout.addWidget(right_splitter, 1)
 
@@ -296,6 +342,10 @@ class DiscogsLookupWidget(QWidget):
         self.analyze_bpm_checkbox = QCheckBox("Also compute BPM")
         self.analyze_bpm_checkbox.setChecked(True)
         apply_layout.addWidget(self.analyze_bpm_checkbox)
+
+        self.analyze_key_checkbox = QCheckBox("Also compute Key")
+        self.analyze_key_checkbox.setChecked(True)
+        apply_layout.addWidget(self.analyze_key_checkbox)
 
         self.dry_run_checkbox = QCheckBox("Dry Run (preview only)")
         apply_layout.addWidget(self.dry_run_checkbox)
@@ -340,6 +390,101 @@ class DiscogsLookupWidget(QWidget):
         self.apply_btn.setEnabled(False)
         self.tracklist_table.setRowCount(0)
 
+    def browse_cover_art(self):
+        """Browse for a cover art image."""
+        image_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Cover Art", "",
+            "Images (*.jpg *.jpeg *.png)"
+        )
+        if image_path:
+            self.cover_art_input.setText(image_path)
+
+    def embed_cover_art_to_tracks(self):
+        """Embed the selected cover art image into every loaded track."""
+        if not self.loaded_tracks:
+            return
+
+        image_path = self.cover_art_input.text().strip()
+        if not image_path:
+            QMessageBox.warning(self, "No Image", "Please select a cover art image first.")
+            return
+
+        if not Path(image_path).exists():
+            QMessageBox.warning(self, "Image Not Found", f"File does not exist:\n{image_path}")
+            return
+
+        success_count = 0
+        errors = []
+        for track_info in self.loaded_tracks:
+            file_path = track_info["file_path"]
+            try:
+                if embed_cover_art(file_path, image_path):
+                    success_count += 1
+                else:
+                    errors.append(file_path)
+            except Exception as e:
+                logger.error("Error embedding cover art in %s: %s", file_path, str(e))
+                errors.append(file_path)
+
+        if errors:
+            self.tools_status_label.setText(
+                f"⚠ Embedded cover art in {success_count}/{len(self.loaded_tracks)} file(s)")
+            QMessageBox.warning(
+                self, "Partial Success",
+                f"Embedded in {success_count}/{len(self.loaded_tracks)} file(s).\n\n"
+                "Failed:\n" + "\n".join(errors[:5]) +
+                (f"\n...and {len(errors) - 5} more" if len(errors) > 5 else "")
+            )
+        else:
+            self.tools_status_label.setText(
+                f"✓ Embedded cover art in {success_count} file(s)")
+
+    def fix_filenames(self):
+        """
+        Rename each loaded track's file to its normalized form (illegal
+        characters and trailing dots/spaces stripped - the same rule the
+        ingest pipeline applies to new files), keeping the DB in sync.
+        """
+        if not self.loaded_tracks:
+            return
+
+        renamed_count = 0
+        errors = []
+        for track_info in self.loaded_tracks:
+            old_path = Path(track_info["file_path"])
+            new_name = normalize_filename(old_path.name)
+            if new_name == old_path.name:
+                continue
+
+            new_path = old_path.parent / new_name
+            if new_path.exists():
+                errors.append(f"{old_path.name}: target already exists")
+                continue
+
+            try:
+                old_path.rename(new_path)
+                update_track_path(str(old_path), str(new_path), db_path=self.db_path)
+                track_info["file_path"] = str(new_path)
+                renamed_count += 1
+            except OSError as e:
+                logger.error("Error renaming %s: %s", old_path, str(e))
+                errors.append(f"{old_path.name}: {str(e)}")
+
+        self.refresh_tracks_table()
+
+        if errors:
+            self.tools_status_label.setText(
+                f"⚠ Renamed {renamed_count} file(s), {len(errors)} error(s)")
+            QMessageBox.warning(
+                self, "Partial Success",
+                f"Renamed {renamed_count} file(s).\n\nErrors:\n" + "\n".join(errors[:5]) +
+                (f"\n...and {len(errors) - 5} more" if len(errors) > 5 else "")
+            )
+        elif renamed_count:
+            self.tools_status_label.setText(f"✓ Renamed {renamed_count} file(s)")
+        else:
+            self.tools_status_label.setText("No filenames needed fixing")
+
     def load_files(self, file_paths: list[str]):
         """Load multiple audio files and display their metadata."""
         errors = []
@@ -368,7 +513,9 @@ class DiscogsLookupWidget(QWidget):
         self.file_count_label.setText(
             f"{len(self.loaded_tracks)} file(s) loaded")
 
-        # Auto-fill search fields from first track
+        # Auto-fill search fields and the editable release-metadata form
+        # from the first track's existing tags, so manual edits (without
+        # ever selecting a Discogs release) start from real values
         if self.loaded_tracks:
             first_metadata = self.loaded_tracks[0]["metadata"]
             artist = first_metadata.get('artist', '')
@@ -377,6 +524,20 @@ class DiscogsLookupWidget(QWidget):
                 self.artist_search_input.setText(artist)
             if album:
                 self.release_search_input.setText(album)
+
+            self.album_input.setText(album)
+            self.album_artist_input.setText(first_metadata.get('album_artist', ''))
+            try:
+                self.year_input.setValue(int(first_metadata.get('year') or 0))
+            except (TypeError, ValueError):
+                self.year_input.setValue(0)
+            self.genre_input.setText(first_metadata.get('genre', ''))
+            self.label_input.setText(first_metadata.get('publisher', ''))
+            self.catalog_number_input.setText(first_metadata.get('catalog_number', ''))
+
+        # Apply is usable as soon as files are loaded - a Discogs match is
+        # optional, not required, for manual metadata editing
+        self.apply_btn.setEnabled(len(self.loaded_tracks) > 0)
 
         # Show errors if any
         if errors:
@@ -693,8 +854,13 @@ class DiscogsLookupWidget(QWidget):
         return details
 
     def apply_metadata(self):
-        """Apply Discogs metadata to all loaded audio files."""
-        if not self.loaded_tracks or not self.selected_release_data:
+        """Apply metadata to all loaded audio files.
+
+        Works with or without a selected Discogs release - the release
+        metadata fields can be filled in by hand for releases that aren't
+        on Discogs at all.
+        """
+        if not self.loaded_tracks:
             return
 
         # Collect release-level metadata from editable fields
@@ -803,7 +969,10 @@ class DiscogsLookupWidget(QWidget):
             "Previewing..." if is_dry_run else "Applying metadata...")
 
         self.apply_worker = ApplyMetadataWorker(
-            file_metadata, self.analyze_bpm_checkbox.isChecked(), dry_run=is_dry_run)
+            file_metadata,
+            self.analyze_bpm_checkbox.isChecked(),
+            analyze_key=self.analyze_key_checkbox.isChecked(),
+            dry_run=is_dry_run)
         self.apply_worker.finished.connect(self.on_apply_metadata_finished)
         self.apply_worker.start()
 

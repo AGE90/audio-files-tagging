@@ -458,3 +458,105 @@ def query(
     finally:
         if close_session:
             session.close()
+
+
+def update_track_path(old_path: str, new_path: str, db_path: str | None = None) -> bool:
+    """
+    Update a Track row's file_path after the underlying file was moved
+    or renamed outside the normal scan/ingest flow.
+
+    Parameters
+    ----------
+    old_path : str
+        The Track row's current file_path.
+    new_path : str
+        The new file_path to store.
+    db_path : Optional[str]
+        Path to SQLite database file. If None, uses default location.
+
+    Returns
+    -------
+    bool
+        True if a matching row was found and updated, False otherwise.
+    """
+    session_factory = get_session_factory(db_path) if db_path else SessionLocal
+    session = session_factory()
+
+    try:
+        track = session.query(Track).filter_by(file_path=old_path).first()
+        if track is None:
+            return False
+        track.file_path = new_path
+        session.commit()
+        return True
+    except Exception as e:
+        logger.error("Error updating track path %s -> %s: %s", old_path, new_path, e)
+        session.rollback()
+        return False
+    finally:
+        session.close()
+
+
+def find_orphaned_tracks(db_path: str | None = None) -> list[Track]:
+    """
+    Find Track rows whose file no longer exists on disk.
+
+    These accumulate whenever a file is moved, renamed, or deleted
+    outside the scan/ingest flow (which is the only thing that keeps
+    file_path in sync with the filesystem).
+
+    Parameters
+    ----------
+    db_path : Optional[str]
+        Path to SQLite database file. If None, uses default location.
+
+    Returns
+    -------
+    List[Track]
+        Track rows whose file_path does not exist.
+    """
+    session_factory = get_session_factory(db_path) if db_path else SessionLocal
+    session = session_factory()
+
+    try:
+        return [
+            track for track in session.query(Track).all()
+            if not Path(track.file_path).exists()
+        ]
+    finally:
+        session.close()
+
+
+def remove_orphaned_tracks(db_path: str | None = None) -> int:
+    """
+    Delete Track rows whose file no longer exists on disk.
+
+    Parameters
+    ----------
+    db_path : Optional[str]
+        Path to SQLite database file. If None, uses default location.
+
+    Returns
+    -------
+    int
+        Number of rows removed.
+    """
+    session_factory = get_session_factory(db_path) if db_path else SessionLocal
+    session = session_factory()
+
+    try:
+        orphans = [
+            track for track in session.query(Track).all()
+            if not Path(track.file_path).exists()
+        ]
+        for track in orphans:
+            session.delete(track)
+        session.commit()
+        logger.info("Removed %d orphaned track(s)", len(orphans))
+        return len(orphans)
+    except Exception as e:
+        logger.error("Error removing orphaned tracks: %s", e)
+        session.rollback()
+        return 0
+    finally:
+        session.close()

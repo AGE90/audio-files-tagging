@@ -4,7 +4,47 @@ Tests for tags module.
 Run with: pytest tests/test_tags.py -v
 """
 from unittest.mock import Mock, patch, MagicMock
-from aft.tags import AudioTags
+from aft.tags import AudioTags, embed_cover_art
+
+
+def test_embed_cover_art_mp3(tmp_path):
+    """Test embedding cover art into an MP3 file."""
+    image_path = tmp_path / "cover.jpg"
+    image_path.write_bytes(b"fake-jpeg-bytes")
+    audio_path = tmp_path / "track.mp3"
+    audio_path.touch()
+
+    with patch('aft.tags.File') as mock_file:
+        mock_audio = Mock()
+        mock_audio.tags = MagicMock()
+        mock_file.return_value = mock_audio
+
+        success = embed_cover_art(audio_path, image_path)
+
+        assert success is True
+        mock_audio.tags.delall.assert_called_once_with('APIC')
+        mock_audio.tags.add.assert_called_once()
+        added_frame = mock_audio.tags.add.call_args[0][0]
+        assert added_frame.mime == 'image/jpeg'
+        assert added_frame.data == b"fake-jpeg-bytes"
+
+
+def test_embed_cover_art_rejects_unsupported_image_format(tmp_path):
+    """Refuse formats we don't have a MIME mapping for."""
+    image_path = tmp_path / "cover.gif"
+    image_path.write_bytes(b"fake-gif-bytes")
+    audio_path = tmp_path / "track.mp3"
+    audio_path.touch()
+
+    assert embed_cover_art(audio_path, image_path) is False
+
+
+def test_embed_cover_art_missing_image(tmp_path):
+    """A nonexistent image file should fail gracefully, not raise."""
+    audio_path = tmp_path / "track.mp3"
+    audio_path.touch()
+
+    assert embed_cover_art(audio_path, tmp_path / "missing.jpg") is False
 
 
 def test_normalize_filename():

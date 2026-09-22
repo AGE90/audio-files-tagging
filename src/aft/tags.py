@@ -4,16 +4,36 @@ Unified tag reading and writing module for audio files.
 Provides a consistent interface for reading and writing metadata tags
 across multiple audio formats: MP3, FLAC, M4A/MP4, and OGG Vorbis.
 """
+import base64
 import logging
 from pathlib import Path
 from typing import Any
 
 from mutagen import File, MutagenError  # type: ignore
+from mutagen.flac import FLAC, Picture
 from mutagen.id3 import (
-    TIT2, TPE1, TALB, TPE2, TDRC, TCON, TPUB, TRCK, TPOS, TBPM, TXXX # type: ignore
+    APIC,
+    TALB,
+    TBPM,
+    TCON,
+    TDRC,
+    TIT2,  # type: ignore
+    TPE1,
+    TPE2,
+    TPOS,
+    TPUB,
+    TRCK,
+    TXXX,
 )
-from mutagen.mp4 import MP4FreeForm  # type: ignore
+from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm  # type: ignore
+
 logger = logging.getLogger(__name__)
+
+_IMAGE_MIME_TYPES = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+}
 
 
 class AudioTags:
@@ -551,3 +571,96 @@ def write_audio_tags(file_path: str | Path, metadata: dict[str, Any]) -> bool:
     """
     tags = AudioTags(file_path)
     return tags.write_tags(metadata)
+
+
+def embed_cover_art(file_path: str | Path, image_path: str | Path) -> bool:
+    """
+    Embed a cover art image into an audio file's tags.
+
+    Supports MP3 (ID3v2 APIC), FLAC (Picture block), M4A/MP4 (covr atom),
+    and OGG Vorbis (base64 METADATA_BLOCK_PICTURE, per the Xiph spec).
+
+    Parameters
+    ----------
+    file_path : Union[str, Path]
+        Path to the audio file to embed the image into.
+    image_path : Union[str, Path]
+        Path to a .jpg/.jpeg/.png cover art image.
+
+    Returns
+    -------
+    bool
+        True if successful, False otherwise.
+
+    Example
+    -------
+    >>> embed_cover_art("track.mp3", "cover.jpg")
+    """
+    file_path = Path(file_path)
+    image_path = Path(image_path)
+
+    mime = _IMAGE_MIME_TYPES.get(image_path.suffix.lower())
+    if mime is None:
+        logger.error("Unsupported cover art format: %s", image_path.suffix)
+        return False
+
+    try:
+        image_data = image_path.read_bytes()
+    except OSError as e:
+        logger.error("Could not read cover art %s: %s", image_path, e)
+        return False
+
+    try:
+        audio = File(str(file_path))
+        if audio is None:
+            logger.error("Could not load file: %s", file_path)
+            return False
+
+        suffix = file_path.suffix.lower()
+
+        if suffix == '.mp3':
+            if audio.tags is None:
+                audio.add_tags()
+            # Remove any existing front-cover pictures before adding the new one
+            audio.tags.delall('APIC')
+            audio.tags.add(APIC(
+                encoding=3, mime=mime, type=3,
+                desc='Cover', data=image_data,
+            ))
+
+        elif isinstance(audio, FLAC):
+            picture = Picture()
+            picture.type = 3
+            picture.mime = mime
+            picture.data = image_data
+            audio.clear_pictures()
+            audio.add_picture(picture)
+
+        elif isinstance(audio, MP4):
+            cover_format = (
+                MP4Cover.FORMAT_PNG if mime == 'image/png' else MP4Cover.FORMAT_JPEG
+            )
+            audio['covr'] = [MP4Cover(image_data, imageformat=cover_format)]
+
+        elif hasattr(audio, 'tags') and audio.tags is not None:
+            # OGG Vorbis: base64-encoded FLAC Picture block, Xiph's
+            # standard convention for embedding art in Vorbis comments
+            picture = Picture()
+            picture.type = 3
+            picture.mime = mime
+            picture.data = image_data
+            audio['METADATA_BLOCK_PICTURE'] = [
+                base64.b64encode(picture.write()).decode('ascii')
+            ]
+
+        else:
+            logger.warning("Unsupported audio format for %s", file_path)
+            return False
+
+        audio.save()
+        logger.info("Successfully embedded cover art in %s", file_path.name)
+        return True
+
+    except (MutagenError, OSError, ValueError) as e:
+        logger.error("Error embedding cover art in %s: %s", file_path, e)
+        return False
