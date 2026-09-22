@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
 
         # Add tabs
         tabs.addTab(DashboardWidget(self.db_path, self), "Dashboard")
-        tabs.addTab(DiscogsLookupWidget(self), "Discogs Lookup")
+        tabs.addTab(DiscogsLookupWidget(self), "Metadata Tools")
         tabs.addTab(QueryWidget(self.db_path, self), "Query Library")
         tabs.addTab(IngestWidget(self.db_path, self), "Batch Ingest")
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QCheckBox, QProgressBar, QTextEdit,
+    QLineEdit, QProgressBar, QTextEdit,
     QFileDialog, QMessageBox, QRadioButton, QButtonGroup
 )
 from PySide6.QtCore import QThread, Signal
@@ -29,27 +29,25 @@ class IngestWorker(QThread):
         source_dir: str,
         dest_root: str,
         db_path: str,
-        analyze_bpm: bool = True,
-        dry_run: bool = False
     ):
         super().__init__()
         self.source_dir = source_dir
         self.dest_root = dest_root
         self.db_path = db_path
-        self.analyze_bpm = analyze_bpm
-        self.dry_run = dry_run
 
     def run(self):
         """Run ingest process."""
         try:
             self.progress.emit(f"Starting ingest from {self.source_dir}")
 
+            # BPM analysis and dry-run preview are handled in the Metadata
+            # Tools tab instead
             report = process_directory(
                 source_dir=self.source_dir,
                 dest_root=self.dest_root,
                 db_path=self.db_path,
-                analyze_bpm=self.analyze_bpm,
-                dry_run=self.dry_run,
+                analyze_bpm=False,
+                dry_run=False,
             )
 
             self.finished.emit(report)
@@ -117,14 +115,6 @@ class IngestWidget(QWidget):
         dest_btn.clicked.connect(self.browse_dest)
         dest_layout.addWidget(dest_btn)
         layout.addLayout(dest_layout)
-
-        # Options
-        self.analyze_bpm_check = QCheckBox("Analyze BPM")
-        self.analyze_bpm_check.setChecked(True)
-        layout.addWidget(self.analyze_bpm_check)
-
-        self.dry_run_check = QCheckBox("Dry Run (no changes)")
-        layout.addWidget(self.dry_run_check)
 
         # Control buttons
         button_layout = QHBoxLayout()
@@ -218,8 +208,6 @@ class IngestWidget(QWidget):
             source_dir=source,
             dest_root=dest,
             db_path=self.db_path,
-            analyze_bpm=self.analyze_bpm_check.isChecked(),
-            dry_run=self.dry_run_check.isChecked(),
         )
 
         self.worker.progress.connect(self.on_progress)

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QMessageBox, QAbstractItemView, QCheckBox,
-    QGroupBox, QFormLayout, QSpinBox, QScrollArea
+    QGroupBox, QFormLayout, QSpinBox, QScrollArea, QSplitter
 )
 from PySide6.QtCore import Qt, QThread, Signal
 
@@ -42,10 +42,16 @@ class ApplyMetadataWorker(QThread):
 
     finished = Signal(int, list)  # success_count, errors
 
-    def __init__(self, file_metadata: list[tuple[str, dict]], analyze_bpm: bool):
+    def __init__(
+        self,
+        file_metadata: list[tuple[str, dict]],
+        analyze_bpm: bool,
+        dry_run: bool = False,
+    ):
         super().__init__()
         self.file_metadata = file_metadata
         self.analyze_bpm = analyze_bpm
+        self.dry_run = dry_run
 
     def run(self):
         success_count = 0
@@ -56,11 +62,20 @@ class ApplyMetadataWorker(QThread):
                 if self.analyze_bpm:
                     existing_bpm = read_audio_tags(file_path).get('bpm')
                     if not existing_bpm:
-                        bpm_result = analyze_and_tag_bpm(file_path, write_tag=True)
+                        # Still detect BPM in a dry run for preview purposes,
+                        # just don't persist it
+                        bpm_result = analyze_and_tag_bpm(
+                            file_path, write_tag=not self.dry_run)
                         logger.info(
                             "BPM analysis for %s: %s", file_path, bpm_result.get('bpm'))
 
-                success = write_audio_tags(file_path, metadata_to_write)
+                if self.dry_run:
+                    logger.info(
+                        "[DRY RUN] Would write to %s: %s", file_path, metadata_to_write)
+                    success = True
+                else:
+                    success = write_audio_tags(file_path, metadata_to_write)
+
                 if success:
                     success_count += 1
                 else:
@@ -83,6 +98,7 @@ class DiscogsLookupWidget(QWidget):
         self.loaded_tracks: list[dict] = []
         self.selected_release_data = None
         self.apply_worker = None
+        self._last_apply_was_dry_run = False
         self.init_ui()
         self.init_discogs_client()
 
@@ -113,19 +129,22 @@ class DiscogsLookupWidget(QWidget):
         layout = QVBoxLayout(container)
 
         # Title
-        title = QLabel("<h2>Discogs Metadata Lookup</h2>")
+        title = QLabel("<h2>Metadata Tools</h2>")
         layout.addWidget(title)
 
         # Status label
         self.status_label = QLabel("Initializing...")
         layout.addWidget(self.status_label)
 
-        # Main horizontal split layout
-        main_horizontal_layout = QHBoxLayout()
-        
-        # === LEFT COLUMN: File Management ===
-        left_column = QVBoxLayout()
-        
+        # Main horizontal split: file/tracks on the left, Discogs tools on
+        # the right. Both sides are splitters so the user can resize panels
+        # instead of fighting fixed pixel heights.
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # === LEFT PANEL: File Management ===
+        left_panel = QWidget()
+        left_column = QVBoxLayout(left_panel)
+
         # File selection section
         file_section = QHBoxLayout()
         file_section.addWidget(QLabel("<b>Audio Files:</b>"))
@@ -154,50 +173,47 @@ class DiscogsLookupWidget(QWidget):
             QAbstractItemView.EditTrigger.EditKeyPressed
         )
         self.tracks_table.itemChanged.connect(self.on_track_item_changed)
-        # Set column widths and height constraints
         self.tracks_table.setColumnWidth(
             len(TRACK_METADATA_COLUMNS) - 1, TABLE_COLUMN_WIDTH_PATH)
-        self.tracks_table.setMaximumHeight(400)  # Increased maximum height
         self.tracks_table.setMinimumHeight(200)
-        # Add with stretch factor of 1 to take available space
+        # Take all available vertical space in the panel
         left_column.addWidget(self.tracks_table, 1)
-        
-        # Add spacing at the bottom to push content to top
-        left_column.addStretch(0)
-        
-        # Add left column to main layout
-        main_horizontal_layout.addLayout(left_column, 1)
-        
-        # === RIGHT COLUMN: Discogs Operations ===
-        right_column = QVBoxLayout()
 
-        # Search section
-        right_column.addWidget(QLabel("<h3>Search Discogs</h3>"))
-        search_layout = QVBoxLayout()
+        main_splitter.addWidget(left_panel)
 
-        # Artist search
+        # === RIGHT PANEL: Discogs search, matching and apply ===
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+
+        # Search Discogs - compact, pinned at the top
+        search_group = QGroupBox("Search Discogs")
+        search_group_layout = QVBoxLayout()
+
         artist_search_layout = QHBoxLayout()
         artist_search_layout.addWidget(QLabel("Artist:"))
         self.artist_search_input = QLineEdit()
         artist_search_layout.addWidget(self.artist_search_input)
-        search_layout.addLayout(artist_search_layout)
+        search_group_layout.addLayout(artist_search_layout)
 
-        # Release search
         release_search_layout = QHBoxLayout()
         release_search_layout.addWidget(QLabel("Release:"))
         self.release_search_input = QLineEdit()
         release_search_layout.addWidget(self.release_search_input)
-        search_layout.addLayout(release_search_layout)
+        search_group_layout.addLayout(release_search_layout)
 
-        # Search button
         search_btn = QPushButton("Search Discogs")
         search_btn.clicked.connect(self.search_discogs)
-        search_layout.addWidget(search_btn)
+        search_group_layout.addWidget(search_btn)
 
-        right_column.addLayout(search_layout)
+        search_group.setLayout(search_group_layout)
+        right_layout.addWidget(search_group)
 
-        # Search results
-        right_column.addWidget(QLabel("<h3>Search Results</h3>"))
+        # Resizable middle section: results/details, metadata form, tracklist
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # Search results + selected release details
+        results_group = QGroupBox("Search Results and Release Details")
+        results_group_layout = QVBoxLayout()
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(len(DISCOGS_RESULTS_COLUMNS))
         self.results_table.setHorizontalHeaderLabels(DISCOGS_RESULTS_COLUMNS)
@@ -207,17 +223,17 @@ class DiscogsLookupWidget(QWidget):
             QTableWidget.SelectionMode.SingleSelection)
         self.results_table.itemSelectionChanged.connect(
             self.on_release_selected)
-        self.results_table.setMaximumHeight(150)  # Increased for better visibility
         self.results_table.setMinimumHeight(100)
-        right_column.addWidget(self.results_table)
+        results_group_layout.addWidget(self.results_table, 1)
 
-        # Selected release details
-        right_column.addWidget(QLabel("<h3>Selected Release Details</h3>"))
         self.release_details_text = QTextEdit()
         self.release_details_text.setReadOnly(True)
-        self.release_details_text.setMaximumHeight(80)
         self.release_details_text.setMinimumHeight(60)
-        right_column.addWidget(self.release_details_text)
+        self.release_details_text.setMaximumHeight(120)
+        results_group_layout.addWidget(self.release_details_text)
+
+        results_group.setLayout(results_group_layout)
+        right_splitter.addWidget(results_group)
 
         # Editable release-level metadata
         release_metadata_group = QGroupBox(
@@ -246,22 +262,31 @@ class DiscogsLookupWidget(QWidget):
         release_metadata_layout.addRow("Catalog #:", self.catalog_number_input)
 
         release_metadata_group.setLayout(release_metadata_layout)
-        right_column.addWidget(release_metadata_group)
+        right_splitter.addWidget(release_metadata_group)
 
         # Discogs tracklist display
-        right_column.addWidget(
-            QLabel("<h3>Discogs Tracklist (Auto-matched to loaded files)</h3>"))
+        tracklist_group = QGroupBox("Discogs Tracklist (Auto-matched to loaded files)")
+        tracklist_group_layout = QVBoxLayout()
         self.tracklist_table = QTableWidget()
         self.tracklist_table.setColumnCount(len(DISCOGS_TRACKLIST_COLUMNS))
         self.tracklist_table.setHorizontalHeaderLabels(
             DISCOGS_TRACKLIST_COLUMNS)
         self.tracklist_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tracklist_table.setMaximumHeight(150)  # Limit height
         self.tracklist_table.setMinimumHeight(80)
-        right_column.addWidget(self.tracklist_table)
+        tracklist_group_layout.addWidget(self.tracklist_table)
+        tracklist_group.setLayout(tracklist_group_layout)
+        right_splitter.addWidget(tracklist_group)
 
-        # Apply metadata section
+        # Results and tracklist (the two tables) get most of the resizable
+        # space; the metadata form only needs its natural height
+        right_splitter.setStretchFactor(0, 2)
+        right_splitter.setStretchFactor(1, 0)
+        right_splitter.setStretchFactor(2, 2)
+
+        right_layout.addWidget(right_splitter, 1)
+
+        # Apply metadata section - pinned action bar at the bottom
         apply_layout = QHBoxLayout()
         self.apply_btn = QPushButton("Apply Metadata to File")
         self.apply_btn.setEnabled(False)
@@ -272,15 +297,20 @@ class DiscogsLookupWidget(QWidget):
         self.analyze_bpm_checkbox.setChecked(True)
         apply_layout.addWidget(self.analyze_bpm_checkbox)
 
+        self.dry_run_checkbox = QCheckBox("Dry Run (preview only)")
+        apply_layout.addWidget(self.dry_run_checkbox)
+
         self.apply_status_label = QLabel("")
         apply_layout.addWidget(self.apply_status_label, 1)
-        right_column.addLayout(apply_layout)
-        
-        # Add right column to main layout
-        main_horizontal_layout.addLayout(right_column, 1)
-        
-        # Add the horizontal split layout to the main vertical layout
-        layout.addLayout(main_horizontal_layout)
+        right_layout.addLayout(apply_layout)
+
+        main_splitter.addWidget(right_panel)
+        # Right panel starts wider since it stacks more sections
+        main_splitter.setStretchFactor(0, 2)
+        main_splitter.setStretchFactor(1, 3)
+        main_splitter.setSizes([450, 750])
+
+        layout.addWidget(main_splitter, 1)
 
         # Set the container in the scroll area
         scroll.setWidget(container)
@@ -694,8 +724,14 @@ class DiscogsLookupWidget(QWidget):
                                for c in self.catalog_number_input.text().split(',')]
             release_metadata['catalog_number'] = catalog_numbers
 
+        is_dry_run = self.dry_run_checkbox.isChecked()
+
         # Prepare summary for confirmation
-        confirm_msg = f"**Apply metadata to {len(self.loaded_tracks)} file(s)**\n\n"
+        confirm_msg = (
+            f"**[DRY RUN] Preview metadata for {len(self.loaded_tracks)} file(s)**\n\n"
+            if is_dry_run else
+            f"**Apply metadata to {len(self.loaded_tracks)} file(s)**\n\n"
+        )
         confirm_msg += "**Release-level metadata (applied to all files):**\n"
         for key, value in release_metadata.items():
             if isinstance(value, list):
@@ -762,19 +798,33 @@ class DiscogsLookupWidget(QWidget):
         # Write metadata (and optionally analyze BPM) on a background thread -
         # BPM analysis is CPU-heavy and would otherwise freeze the UI
         self.apply_btn.setEnabled(False)
-        self.apply_status_label.setText("Applying metadata...")
+        self._last_apply_was_dry_run = is_dry_run
+        self.apply_status_label.setText(
+            "Previewing..." if is_dry_run else "Applying metadata...")
 
         self.apply_worker = ApplyMetadataWorker(
-            file_metadata, self.analyze_bpm_checkbox.isChecked())
+            file_metadata, self.analyze_bpm_checkbox.isChecked(), dry_run=is_dry_run)
         self.apply_worker.finished.connect(self.on_apply_metadata_finished)
         self.apply_worker.start()
 
     def on_apply_metadata_finished(self, success_count: int, errors: list):
         """Handle completion of the metadata/BPM apply worker."""
         self.apply_btn.setEnabled(True)
+        is_dry_run = self._last_apply_was_dry_run
 
         # Show results
         if success_count == len(self.loaded_tracks):
+            if is_dry_run:
+                self.apply_status_label.setText(
+                    f"✓ [DRY RUN] {success_count} file(s) would be updated")
+                QMessageBox.information(
+                    self,
+                    "Dry Run Complete",
+                    f"No files were changed. {success_count} file(s) would be updated - "
+                    "see the log for details."
+                )
+                return
+
             self.apply_status_label.setText(
                 f"✓ Successfully updated {success_count} file(s)!")
             QMessageBox.information(
