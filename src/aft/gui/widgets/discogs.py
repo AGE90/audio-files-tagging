@@ -159,11 +159,11 @@ class DiscogsLookupWidget(QWidget):
         # instead of fighting fixed pixel heights.
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # === LEFT PANEL: File Management ===
+        # === LEFT PANEL: File Management & Track Matching ===
         left_panel = QWidget()
         left_column = QVBoxLayout(left_panel)
 
-        # File selection section
+        # File selection section - compact, pinned at the top
         file_section = QHBoxLayout()
         file_section.addWidget(QLabel("<b>Audio Files:</b>"))
         self.file_count_label = QLabel("No files loaded")
@@ -180,8 +180,12 @@ class DiscogsLookupWidget(QWidget):
         file_section.addWidget(self.send_to_ingest_btn)
         left_column.addLayout(file_section)
 
-        # Current tracks metadata table
-        left_column.addWidget(QLabel("<h3>Loaded Tracks</h3>"))
+        # Resizable: loaded tracks and their Discogs tracklist match sit
+        # stacked vertically so neither table has to hog the whole column
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        tracks_group = QGroupBox("Loaded Tracks")
+        tracks_group_layout = QVBoxLayout()
         self.tracks_table = QTableWidget()
         self.tracks_table.setColumnCount(len(TRACK_METADATA_COLUMNS))
         self.tracks_table.setHorizontalHeaderLabels(TRACK_METADATA_COLUMNS)
@@ -197,9 +201,31 @@ class DiscogsLookupWidget(QWidget):
         self.tracks_table.itemChanged.connect(self.on_track_item_changed)
         self.tracks_table.setColumnWidth(
             len(TRACK_METADATA_COLUMNS) - 1, TABLE_COLUMN_WIDTH_PATH)
-        self.tracks_table.setMinimumHeight(200)
-        # Take all available vertical space in the panel
-        left_column.addWidget(self.tracks_table, 1)
+        self.tracks_table.setMinimumHeight(150)
+        tracks_group_layout.addWidget(self.tracks_table)
+        tracks_group.setLayout(tracks_group_layout)
+        left_splitter.addWidget(tracks_group)
+
+        # Discogs tracklist display - lives here (not the right panel) so
+        # it pairs visually with the tracks it's matched against, and both
+        # tables get real room to expand instead of one table taking the
+        # whole column while the right panel stacks everything else
+        tracklist_group = QGroupBox("Discogs Tracklist (Auto-matched to loaded files)")
+        tracklist_group_layout = QVBoxLayout()
+        self.tracklist_table = QTableWidget()
+        self.tracklist_table.setColumnCount(len(DISCOGS_TRACKLIST_COLUMNS))
+        self.tracklist_table.setHorizontalHeaderLabels(
+            DISCOGS_TRACKLIST_COLUMNS)
+        self.tracklist_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tracklist_table.setMinimumHeight(80)
+        tracklist_group_layout.addWidget(self.tracklist_table)
+        tracklist_group.setLayout(tracklist_group_layout)
+        left_splitter.addWidget(tracklist_group)
+
+        left_splitter.setStretchFactor(0, 2)  # Loaded tracks
+        left_splitter.setStretchFactor(1, 1)  # Discogs tracklist match
+        left_column.addWidget(left_splitter, 1)
 
         main_splitter.addWidget(left_panel)
 
@@ -286,20 +312,6 @@ class DiscogsLookupWidget(QWidget):
         release_metadata_group.setLayout(release_metadata_layout)
         right_splitter.addWidget(release_metadata_group)
 
-        # Discogs tracklist display
-        tracklist_group = QGroupBox("Discogs Tracklist (Auto-matched to loaded files)")
-        tracklist_group_layout = QVBoxLayout()
-        self.tracklist_table = QTableWidget()
-        self.tracklist_table.setColumnCount(len(DISCOGS_TRACKLIST_COLUMNS))
-        self.tracklist_table.setHorizontalHeaderLabels(
-            DISCOGS_TRACKLIST_COLUMNS)
-        self.tracklist_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tracklist_table.setMinimumHeight(80)
-        tracklist_group_layout.addWidget(self.tracklist_table)
-        tracklist_group.setLayout(tracklist_group_layout)
-        right_splitter.addWidget(tracklist_group)
-
         # Additional tools: cover art embedding and filename normalization,
         # both operating on the currently loaded tracks. This is the home
         # for future tagging tools beyond Discogs lookup.
@@ -329,13 +341,11 @@ class DiscogsLookupWidget(QWidget):
         tools_group.setLayout(tools_group_layout)
         right_splitter.addWidget(tools_group)
 
-        # Results and tracklist (the two tables) get most of the resizable
-        # space; the metadata form and tools panel only need their natural
-        # height
+        # Search results get most of the resizable space; the metadata
+        # form and tools panel only need their natural height
         right_splitter.setStretchFactor(0, 2)
         right_splitter.setStretchFactor(1, 0)
-        right_splitter.setStretchFactor(2, 2)
-        right_splitter.setStretchFactor(3, 0)
+        right_splitter.setStretchFactor(2, 0)
 
         right_layout.addWidget(right_splitter, 1)
 
@@ -362,10 +372,11 @@ class DiscogsLookupWidget(QWidget):
         right_layout.addLayout(apply_layout)
 
         main_splitter.addWidget(right_panel)
-        # Right panel starts wider since it stacks more sections
-        main_splitter.setStretchFactor(0, 2)
-        main_splitter.setStretchFactor(1, 3)
-        main_splitter.setSizes([450, 750])
+        # Both sides now hold comparable content (two tables on the left,
+        # search results plus compact forms on the right) - split evenly
+        main_splitter.setStretchFactor(0, 1)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setSizes([600, 600])
 
         layout.addWidget(main_splitter, 1)
 
