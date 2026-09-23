@@ -15,6 +15,7 @@ from mutagen.id3 import (
     APIC,
     TALB,
     TBPM,
+    TCOM,
     TCON,
     TDRC,
     TIT2,  # type: ignore
@@ -102,6 +103,7 @@ class AudioTags:
             - key: str
             - publisher: List[str]
             - catalog_number: str
+            - composer: str
             - comment: str
         """
         if self.audio is None:
@@ -172,6 +174,7 @@ class AudioTags:
             'key': get_text('TKEY'),
             'publisher': '; '.join(get_text_list('TPUB')),
             'catalog_number': get_txxx('CATALOGNUMBER'),
+            'composer': get_text('TCOM'),
             'comment': get_comm(),
         }
 
@@ -199,6 +202,7 @@ class AudioTags:
             'key': get_tag('INITIALKEY') or get_tag('KEY'),
             'publisher': '; '.join(tags.get('LABEL', [])),
             'catalog_number': get_tag('CATALOGNUMBER'),
+            'composer': get_tag('COMPOSER'),
             'comment': get_tag('COMMENT'),
         }
 
@@ -244,6 +248,7 @@ class AudioTags:
             'key': get_freeform('----:com.apple.iTunes:initialkey'),
             'publisher': get_freeform('----:com.apple.iTunes:LABEL'),
             'catalog_number': get_freeform('----:com.apple.iTunes:CATALOGNUMBER'),
+            'composer': get_tag('\xa9wrt'),
             'comment': get_tag('\xa9cmt'),
         }
 
@@ -271,6 +276,7 @@ class AudioTags:
             'key': get_tag('INITIALKEY') or get_tag('KEY'),
             'publisher': '; '.join(tags.get('LABEL', [])),
             'catalog_number': get_tag('CATALOGNUMBER'),
+            'composer': get_tag('COMPOSER'),
             'comment': get_tag('COMMENT'),
         }
 
@@ -299,6 +305,7 @@ class AudioTags:
             - publisher: str or List[str]
             - labels: List[str] (merged with publisher)
             - catalog_number: str or List[str]
+            - composer: str
             - comment: str
 
         Returns
@@ -365,6 +372,8 @@ class AudioTags:
             update_frame('TPE2', TPE2, metadata['album_artist'])
         if 'year' in metadata:
             update_frame('TDRC', TDRC, str(metadata['year']))
+        if 'composer' in metadata:
+            update_frame('TCOM', TCOM, metadata['composer'])
 
         # Genre and styles
         genres = []
@@ -432,6 +441,8 @@ class AudioTags:
             tags['ALBUMARTIST'] = metadata['album_artist']
         if 'year' in metadata:
             tags['DATE'] = str(metadata['year'])
+        if 'composer' in metadata:
+            tags['COMPOSER'] = metadata['composer']
 
         # Genre and styles
         genres = []
@@ -486,6 +497,8 @@ class AudioTags:
             tags['aART'] = metadata['album_artist']
         if 'year' in metadata:
             tags['\xa9day'] = str(metadata['year'])
+        if 'composer' in metadata:
+            tags['\xa9wrt'] = metadata['composer']
 
         # Genre and styles
         genres = []

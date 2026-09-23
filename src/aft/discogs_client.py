@@ -10,6 +10,37 @@ from discogs_client.exceptions import HTTPError, DiscogsAPIError
 
 logger = logging.getLogger(__name__)
 
+# Discogs has no single "composer" field - it's a credited role among
+# extraartists (exposed by the client library as .credits), alongside
+# remixer/mixed-by/etc. Match on role text rather than an exact string
+# since Discogs contributors phrase it inconsistently.
+_COMPOSER_ROLE_MARKERS = ('composed by', 'written-by', 'music by')
+
+
+def _extract_composer_credit(credited_artists) -> str:
+    """
+    Pull composer/writer credits out of a Discogs extraartists list.
+
+    Parameters
+    ----------
+    credited_artists : list
+        Artist objects from a Track's or Release's `.credits` field, each
+        wrapping the raw API dict (with a 'role' key) as `.data`.
+
+    Returns
+    -------
+    str
+        Comma-separated composer name(s), or '' if none are credited.
+    """
+    names = []
+    for artist in credited_artists or []:
+        role = artist.data.get('role', '').lower()
+        if any(marker in role for marker in _COMPOSER_ROLE_MARKERS):
+            name = getattr(artist, 'name', '')
+            if name and name not in names:
+                names.append(name)
+    return ', '.join(names)
+
 
 class DiscogsClient:
     """
@@ -264,6 +295,10 @@ class DiscogsClient:
             formats_list = getattr(release, 'formats', [])
             tracklist = getattr(release, 'tracklist', [])
 
+            # Composer credit is sometimes on the release rather than each
+            # track (common for singles/EPs) - fall back to it per track
+            release_composer = _extract_composer_credit(getattr(release, 'credits', []))
+
             release_data = {
                 'id': release.id,
                 'title': release.title,
@@ -286,6 +321,8 @@ class DiscogsClient:
                         'position': getattr(track, 'position', ''),
                         'title': getattr(track, 'title', ''),
                         'duration': getattr(track, 'duration', ''),
+                        'composer': _extract_composer_credit(
+                            getattr(track, 'credits', [])) or release_composer,
                     }
                     for track in tracklist
                 ] if tracklist else []

@@ -1,7 +1,7 @@
 """
 Database migration script to add new columns to tracks table.
 
-Adds: album_artist, track_number, disc_number, publisher, catalog_number
+Adds: album_artist, track_number, disc_number, publisher, catalog_number, composer
 Removes: tags_json
 """
 import sqlite3
@@ -30,6 +30,7 @@ def migrate_database(db_path: str):
             'disc_number': 'VARCHAR(32)',
             'publisher': 'VARCHAR(255)',
             'catalog_number': 'VARCHAR(255)',
+            'composer': 'VARCHAR(255)',
         }
         
         for col_name, col_type in new_columns.items():

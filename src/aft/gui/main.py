@@ -57,10 +57,21 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
 
         # Add tabs
+        metadata_tools = DiscogsLookupWidget(self.db_path, self)
+        ingest_widget = IngestWidget(self.db_path, self)
+
         tabs.addTab(DashboardWidget(self.db_path, self), "Dashboard")
-        tabs.addTab(DiscogsLookupWidget(self.db_path, self), "Metadata Tools")
+        tabs.addTab(metadata_tools, "Metadata Tools")
         tabs.addTab(QueryWidget(self.db_path, self), "Query Library")
-        tabs.addTab(IngestWidget(self.db_path, self), "Batch Ingest")
+        tabs.addTab(ingest_widget, "Batch Ingest")
+
+        self.tabs = tabs
+        self.ingest_widget = ingest_widget
+
+        # Hand off a release's folder from Metadata Tools straight into
+        # Batch Ingest, so editing metadata and then ingesting doesn't
+        # require re-browsing for the same folder
+        metadata_tools.send_to_ingest.connect(self.receive_release_for_ingest)
 
         self.setCentralWidget(tabs)
 
@@ -69,6 +80,11 @@ class MainWindow(QMainWindow):
 
         # Status bar
         self.statusBar().showMessage(STATUS_READY)
+
+    def receive_release_for_ingest(self, path: str):
+        """Pre-fill Batch Ingest with a release handed off from Metadata Tools."""
+        self.ingest_widget.set_source_release(path)
+        self.tabs.setCurrentWidget(self.ingest_widget)
 
     def init_database(self):
         """Initialize database."""

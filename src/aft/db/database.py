@@ -143,6 +143,7 @@ def get_audio_file_metadata(file_path: Path) -> dict[str, Any] | None:
             'disc_number': str(tags.get('disc_number', '')),
             'year': tags.get('year'),
             'genre': genre,
+            'composer': tags.get('composer', ''),
             'bpm': bpm,
             'key': tags.get('key', ''),
             'publisher': publisher,

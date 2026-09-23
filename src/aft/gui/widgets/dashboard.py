@@ -259,36 +259,38 @@ class DashboardWidget(QWidget):
                 self.recent_table.setItem(
                     i, 0, QTableWidgetItem(str(track.title or "")))
                 self.recent_table.setItem(
-                    i, 1, QTableWidgetItem(str(track.artist or "")))
+                    i, 1, QTableWidgetItem(str(track.composer or "")))
                 self.recent_table.setItem(
-                    i, 2, QTableWidgetItem(str(track.album_artist or "")))
+                    i, 2, QTableWidgetItem(str(track.artist or "")))
                 self.recent_table.setItem(
-                    i, 3, QTableWidgetItem(str(track.album or "")))
+                    i, 3, QTableWidgetItem(str(track.album_artist or "")))
                 self.recent_table.setItem(
-                    i, 4, QTableWidgetItem(str(track.track_number or "")))
+                    i, 4, QTableWidgetItem(str(track.album or "")))
                 self.recent_table.setItem(
-                    i, 5, QTableWidgetItem(str(track.disc_number or "")))
+                    i, 5, QTableWidgetItem(str(track.track_number or "")))
                 self.recent_table.setItem(
-                    i, 6, QTableWidgetItem(str(track.year or "")))
+                    i, 6, QTableWidgetItem(str(track.disc_number or "")))
                 self.recent_table.setItem(
-                    i, 7, QTableWidgetItem(str(track.genre or "")))
+                    i, 7, QTableWidgetItem(str(track.year or "")))
                 self.recent_table.setItem(
-                    i, 8, QTableWidgetItem(str(track.key or "")))
+                    i, 8, QTableWidgetItem(str(track.genre or "")))
+                self.recent_table.setItem(
+                    i, 9, QTableWidgetItem(str(track.key or "")))
                 bpm_str = f"{track.bpm:.1f}" if track.bpm is not None else ""
-                self.recent_table.setItem(i, 9, QTableWidgetItem(bpm_str))
+                self.recent_table.setItem(i, 10, QTableWidgetItem(bpm_str))
                 duration_str = f"{track.duration:.1f}s" if track.duration is not None else ""
-                self.recent_table.setItem(i, 10, QTableWidgetItem(duration_str))
+                self.recent_table.setItem(i, 11, QTableWidgetItem(duration_str))
                 bitrate_str = f"{track.bitrate // 1000}kbps" if track.bitrate is not None else ""
-                self.recent_table.setItem(i, 11, QTableWidgetItem(bitrate_str))
+                self.recent_table.setItem(i, 12, QTableWidgetItem(bitrate_str))
                 sample_rate_str = f"{track.sample_rate}Hz" if track.sample_rate is not None else ""
                 self.recent_table.setItem(
-                    i, 12, QTableWidgetItem(sample_rate_str))
+                    i, 13, QTableWidgetItem(sample_rate_str))
                 self.recent_table.setItem(
-                    i, 13, QTableWidgetItem(str(track.publisher or "")))
+                    i, 14, QTableWidgetItem(str(track.publisher or "")))
                 self.recent_table.setItem(
-                    i, 14, QTableWidgetItem(str(track.catalog_number or "")))
+                    i, 15, QTableWidgetItem(str(track.catalog_number or "")))
                 self.recent_table.setItem(
-                    i, 15, QTableWidgetItem(str(track.file_path or "")))
+                    i, 16, QTableWidgetItem(str(track.file_path or "")))
 
         except Exception as e:
             logger.error("Error loading statistics: %s", str(e), exc_info=True)

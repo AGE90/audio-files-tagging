@@ -79,6 +79,7 @@ class Track(Base):
     bpm = Column(Float, nullable=True)
     key = Column(String(32), nullable=True)
     genre = Column(String(255), nullable=True)
+    composer = Column(String(255), nullable=True)
     year = Column(Integer, nullable=True)
     publisher = Column(String(255), nullable=True)
     catalog_number = Column(String(255), nullable=True)

@@ -2,6 +2,7 @@
 Discogs lookup widget for fetching and applying metadata from Discogs API.
 """
 import logging
+import os
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from ..constants import (
 
 # Track metadata table columns
 TRACK_METADATA_COLUMNS = [
-    "Track #", "Title", "Artist", "Album", "Year",
+    "Track #", "Title", "Composer", "Artist", "Album", "Year",
     "Genre", "Duration", "File Path"
 ]
 
@@ -104,6 +105,8 @@ class ApplyMetadataWorker(QThread):
 class DiscogsLookupWidget(QWidget):
     """Widget for looking up and applying metadata from Discogs."""
 
+    send_to_ingest = Signal(str)  # Common folder of the currently loaded tracks
+
     def __init__(self, db_path: str, parent=None):
         super().__init__(parent)
         self.db_path = db_path
@@ -171,6 +174,10 @@ class DiscogsLookupWidget(QWidget):
         clear_btn = QPushButton("Clear All")
         clear_btn.clicked.connect(self.clear_files)
         file_section.addWidget(clear_btn)
+        self.send_to_ingest_btn = QPushButton("Send to Batch Ingest")
+        self.send_to_ingest_btn.setEnabled(False)
+        self.send_to_ingest_btn.clicked.connect(self.send_release_to_ingest)
+        file_section.addWidget(self.send_to_ingest_btn)
         left_column.addLayout(file_section)
 
         # Current tracks metadata table
@@ -388,7 +395,21 @@ class DiscogsLookupWidget(QWidget):
         self.tracks_table.setRowCount(0)
         self.file_count_label.setText("No files loaded")
         self.apply_btn.setEnabled(False)
+        self.send_to_ingest_btn.setEnabled(False)
         self.tracklist_table.setRowCount(0)
+
+    def send_release_to_ingest(self):
+        """Emit the loaded tracks' common folder for the Batch Ingest tab.
+
+        Lets the Batch Ingest tab pick up right where metadata editing left
+        off, without re-browsing for a folder the user just worked in.
+        """
+        if not self.loaded_tracks:
+            return
+
+        parent_dirs = {str(Path(t["file_path"]).parent) for t in self.loaded_tracks}
+        common_dir = os.path.commonpath(list(parent_dirs))
+        self.send_to_ingest.emit(common_dir)
 
     def browse_cover_art(self):
         """Browse for a cover art image."""
@@ -500,7 +521,8 @@ class DiscogsLookupWidget(QWidget):
                     "metadata": metadata,
                     "discogs_match": None,  # Will be populated when matching
                     "edited_track_number": metadata.get('track_number'),
-                    "edited_title": metadata.get('title')
+                    "edited_title": metadata.get('title'),
+                    "edited_composer": metadata.get('composer'),
                 }
                 self.loaded_tracks.append(track_info)
 
@@ -538,6 +560,7 @@ class DiscogsLookupWidget(QWidget):
         # Apply is usable as soon as files are loaded - a Discogs match is
         # optional, not required, for manual metadata editing
         self.apply_btn.setEnabled(len(self.loaded_tracks) > 0)
+        self.send_to_ingest_btn.setEnabled(len(self.loaded_tracks) > 0)
 
         # Show errors if any
         if errors:
@@ -568,22 +591,28 @@ class DiscogsLookupWidget(QWidget):
             title_item = QTableWidgetItem(str(title) if title else "")
             self.tracks_table.setItem(i, 1, title_item)
 
+            # Composer (editable)
+            composer = track_info.get(
+                "edited_composer") or metadata.get('composer', '')
+            composer_item = QTableWidgetItem(str(composer) if composer else "")
+            self.tracks_table.setItem(i, 2, composer_item)
+
             # Artist (read-only)
             artist_item = QTableWidgetItem(str(metadata.get('artist', '')))
             artist_item.setFlags(artist_item.flags() & ~
                                  Qt.ItemFlag.ItemIsEditable)
-            self.tracks_table.setItem(i, 2, artist_item)
+            self.tracks_table.setItem(i, 3, artist_item)
 
             # Album (read-only)
             album_item = QTableWidgetItem(str(metadata.get('album', '')))
             album_item.setFlags(album_item.flags() & ~
                                 Qt.ItemFlag.ItemIsEditable)
-            self.tracks_table.setItem(i, 3, album_item)
+            self.tracks_table.setItem(i, 4, album_item)
 
             # Year (read-only)
             year_item = QTableWidgetItem(str(metadata.get('year', '')))
             year_item.setFlags(year_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.tracks_table.setItem(i, 4, year_item)
+            self.tracks_table.setItem(i, 5, year_item)
 
             # Genre (read-only)
             genre = metadata.get('genre', '')
@@ -592,7 +621,7 @@ class DiscogsLookupWidget(QWidget):
             genre_item = QTableWidgetItem(str(genre))
             genre_item.setFlags(genre_item.flags() & ~
                                 Qt.ItemFlag.ItemIsEditable)
-            self.tracks_table.setItem(i, 5, genre_item)
+            self.tracks_table.setItem(i, 6, genre_item)
 
             # Duration (read-only)
             duration = metadata.get('duration')
@@ -600,17 +629,17 @@ class DiscogsLookupWidget(QWidget):
             duration_item = QTableWidgetItem(duration_str)
             duration_item.setFlags(duration_item.flags()
                                    & ~Qt.ItemFlag.ItemIsEditable)
-            self.tracks_table.setItem(i, 6, duration_item)
+            self.tracks_table.setItem(i, 7, duration_item)
 
             # File Path (read-only)
             path_item = QTableWidgetItem(track_info["file_path"])
             path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.tracks_table.setItem(i, 7, path_item)
+            self.tracks_table.setItem(i, 8, path_item)
 
         self.tracks_table.blockSignals(False)
 
     def on_track_item_changed(self, item: QTableWidgetItem):
-        """Handle manual edits to track table (track number and title)."""
+        """Handle manual edits to track table (track number, title, composer)."""
         row = item.row()
         col = item.column()
 
@@ -619,11 +648,13 @@ class DiscogsLookupWidget(QWidget):
 
         track_info = self.loaded_tracks[row]
 
-        # Only handle Track # (col 0) and Title (col 1)
+        # Only handle Track # (col 0), Title (col 1), and Composer (col 2)
         if col == 0:  # Track #
             track_info["edited_track_number"] = item.text()
         elif col == 1:  # Title
             track_info["edited_title"] = item.text()
+        elif col == 2:  # Composer
+            track_info["edited_composer"] = item.text()
 
     def search_discogs(self):
         """Search Discogs for releases."""
@@ -775,6 +806,13 @@ class DiscogsLookupWidget(QWidget):
                 matched_file["edited_track_number"] = position
                 matched_file["edited_title"] = title
 
+                # Discogs doesn't always credit a composer - don't clobber
+                # whatever was already loaded (file tag or manual edit)
+                # with a blank when it has none for this track
+                composer = discogs_track.get('composer', '')
+                if composer:
+                    matched_file["edited_composer"] = composer
+
                 # Remove from unmatched list
                 unmatched_tracks.remove(matched_file)
             else:
@@ -910,13 +948,16 @@ class DiscogsLookupWidget(QWidget):
             filename = track_info["file_path"].split("\\")[-1]
             edited_track_num = track_info.get("edited_track_number")
             edited_title = track_info.get("edited_title")
+            edited_composer = track_info.get("edited_composer")
 
-            if edited_track_num or edited_title:
+            if edited_track_num or edited_title or edited_composer:
                 change = f"  • {filename}:"
                 if edited_track_num:
                     change += f" Track#{edited_track_num}"
                 if edited_title:
                     change += f" \"{edited_title}\""
+                if edited_composer:
+                    change += f" (composer: {edited_composer})"
                 track_changes.append(change)
 
         if track_changes:
@@ -958,6 +999,10 @@ class DiscogsLookupWidget(QWidget):
             edited_title = track_info.get("edited_title")
             if edited_title:
                 metadata_to_write['title'] = edited_title
+
+            edited_composer = track_info.get("edited_composer")
+            if edited_composer:
+                metadata_to_write['composer'] = edited_composer
 
             file_metadata.append((file_path, metadata_to_write))
 

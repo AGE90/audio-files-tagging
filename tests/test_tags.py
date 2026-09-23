@@ -69,6 +69,7 @@ def test_audio_tags_read_mp3():
             'TIT2': Mock(text=['Test Title']),
             'TPE1': Mock(text=['Test Artist']),
             'TALB': Mock(text=['Test Album']),
+            'TCOM': Mock(text=['Test Composer']),
         }
         mock_audio = Mock()
         # Real ID3 tags support both dict-style .get() and .getall() (for
@@ -85,6 +86,7 @@ def test_audio_tags_read_mp3():
         assert metadata['title'] == 'Test Title'
         assert metadata['artist'] == 'Test Artist'
         assert metadata['album'] == 'Test Album'
+        assert metadata['composer'] == 'Test Composer'
 
 
 def test_audio_tags_write_mp3():
@@ -98,13 +100,15 @@ def test_audio_tags_write_mp3():
         success = tags.write_tags({
             'artist': 'New Artist',
             'album': 'New Album',
-            'bpm': 128
+            'bpm': 128,
+            'composer': 'New Composer',
         })
-        
+
         assert success is True
         assert 'TPE1' in mock_audio.tags
         assert 'TALB' in mock_audio.tags
         assert 'TBPM' in mock_audio.tags
+        assert mock_audio.tags['TCOM'].text[0] == 'New Composer'
 
 
 def test_audio_tags_merge_genre_and_styles():
@@ -171,16 +175,31 @@ def test_audio_tags_flac_support():
         mock_audio.tags = {
             'TITLE': ['Test Title'],
             'ARTIST': ['Test Artist'],
-            'BPM': ['128']
+            'BPM': ['128'],
+            'COMPOSER': ['Test Composer'],
         }
         mock_file.return_value = mock_audio
-        
+
         tags = AudioTags('test.flac')
         metadata = tags.read_tags()
-        
+
         assert metadata['title'] == 'Test Title'
         assert metadata['artist'] == 'Test Artist'
         assert metadata['bpm'] == '128'
+        assert metadata['composer'] == 'Test Composer'
+
+
+def test_audio_tags_write_mp4_composer():
+    """Test writing composer tag to MP4 file."""
+    with patch('aft.tags.File') as mock_file:
+        mock_audio = MagicMock()
+        mock_audio.tags = {}
+        mock_file.return_value = mock_audio
+
+        tags = AudioTags('test.m4a')
+        tags.write_tags({'composer': 'Test Composer'})
+
+        assert mock_audio.tags['\xa9wrt'] == 'Test Composer'
 
 
 def test_audio_tags_read_mp4_bpm_absent_is_empty_string():

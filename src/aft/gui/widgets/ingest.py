@@ -155,6 +155,15 @@ class IngestWidget(QWidget):
         if dir_path:
             self.source_input.setText(dir_path)
 
+    def set_source_release(self, path: str):
+        """Pre-fill the source path as a single release folder.
+
+        Used by the Metadata Tools tab's "Send to Batch Ingest" handoff so
+        the user doesn't have to re-browse for a folder they just worked in.
+        """
+        self.release_radio.setChecked(True)
+        self.source_input.setText(path)
+
     def browse_dest(self):
         """Browse for destination directory."""
         dir_path = QFileDialog.getExistingDirectory(

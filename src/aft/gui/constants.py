@@ -39,7 +39,7 @@ TABLE_COLUMN_WIDTH_DEFAULT = 100
 
 # Dashboard Table Columns
 DASHBOARD_COLUMNS = [
-    "Title", "Artist", "Album Artist", "Album", "Track #", "Disc #",
+    "Title", "Composer", "Artist", "Album Artist", "Album", "Track #", "Disc #",
     "Year", "Genre", "Key", "BPM", "Duration", "Bitrate",
     "Sample Rate", "Publisher", "Catalog #", "Path"
 ]
